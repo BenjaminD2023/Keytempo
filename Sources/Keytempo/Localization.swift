@@ -38,6 +38,14 @@ enum AppLanguage {
     ]
 
     private static let english: [String: String] = [
+        "所有输入语言统一按五次操作折算 WPM，含组合与编辑，不代表实际词数或上屏字数。": "All input languages use one WPM equivalent per five operations, including composition and edits. This is not actual word or committed-character output.",
+        "全局速度统一使用估算 WPM；真实 CPM 仅在有实际上屏数据的接入路径显示。": "Global rates use estimated WPM for all languages. Actual CPM is shown only for integrated paths with real character commits.",
+        "图表仅显示所选语言的估算 WPM；接入路径的真实 CPM 见下方明细，不与 WPM 叠加。": "The chart shows estimated WPM for the selected language. Actual CPM from integrated paths remains in the details below and is not overlaid with WPM.",
+        "历史按所选周期和输入语言分别汇总估算 WPM；不同语言不混合，独立 KPM 保留。": "Estimated WPM is grouped by period and input language. Languages remain separate, with independent KPM retained.",
+        "所选语言的估算 WPM 趋势，%@": "Estimated WPM trend for the selected language, %@",
+        "按键折算 WPM（全局估算）": "Keystroke WPM (global estimate)",
+        "全局主要速度对各输入语言统一使用按键折算 WPM = 输入过程 KPM ÷ 5，包含组合与编辑，不代表实际词数或汉字数。真实提交路径保留实际 CPM。输入源语言变化会切段，历史估算 WPM 按语言独立汇总，不与真实 CPM 叠加。": "All languages use global keystroke-equivalent WPM = process KPM ÷ 5, including composition and edits. It does not count actual words or Chinese characters. Integrated commit paths retain actual CPM. Source changes break bursts; historical estimated WPM stays grouped by language without overlaying actual CPM.",
+        "主要速度（统一估算 WPM／接入路径 CPM）": "Primary rate (unified estimated WPM / integrated CPM)",
         "软件更新": "Software updates",
         "检查更新…": "Check for Updates…",
         "当前版本 %@": "Current version %@",

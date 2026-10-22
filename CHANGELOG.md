@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.1 — 2026-10-22
+
+- Show global typing estimates in the same five-operation WPM scale for Chinese, English and other input languages; retain actual CPM only where a confirmed commit adapter supplies characters.
+- Keep per-language estimated WPM history separate from measured CPM, with the existing optional KPM display and filtering unchanged.
+- Reopen the statistics window when opening an already running app with no visible windows.
+- Maintain the existing signing identity and update channel for an in-place permission-retention upgrade test.
+
 ## 1.2.0 — 2026-10-22
 
 - Add Sparkle 2.10.0 update checks, manual download/install and optional automatic checks/downloads.

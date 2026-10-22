@@ -25,12 +25,35 @@ struct MetricDisplay: Equatable {
     var intervals = 0.0, seconds = 0.0
     var kpm: Double?, todayKPM: Double?, newKPM: Double?
     var cpm: Double?, todayCPM: Double?
+    var estimatedWPM: Double? { TypingRate.estimatedWPM(fromKPM: kpm) }
+    var todayEstimatedWPM: Double? { TypingRate.estimatedWPM(fromKPM: todayKPM) }
     var primaryUnit: PrimaryTypingUnit { TypingRate.primaryUnit(forLanguage: language) }
     var primaryRate: Double? {
         switch primaryUnit { case .wpm: return TypingRate.estimatedWPM(fromKPM: kpm); case .cpm: return cpm; case .unknown: return nil }
     }
     var todayPrimaryRate: Double? {
         switch primaryUnit { case .wpm: return TypingRate.estimatedWPM(fromKPM: todayKPM); case .cpm: return todayCPM; case .unknown: return nil }
+    }
+}
+
+/// Global estimates use the same five-operation WPM scale for every language.
+/// This presentation never creates committed characters or a measured CPM.
+struct MenuSpeedDisplay: Equatable {
+    let value: Double?
+    let unit: String
+    let estimated: Bool
+    let isCharacterFallback: Bool
+
+    init(metric: MetricDisplay, evidence: Evidence, forceKPM: Bool = false) {
+        isCharacterFallback = !forceKPM && evidence == .probable && metric.primaryUnit == .cpm
+        if forceKPM {
+            value = metric.kpm; unit = "KPM"; estimated = true
+        } else if evidence == .probable {
+            value = metric.estimatedWPM; unit = "WPM"; estimated = true
+        } else {
+            value = metric.primaryRate; unit = metric.primaryUnit.rawValue
+            estimated = metric.primaryUnit == .wpm
+        }
     }
 }
 /// Session-only last completed results; never reconstructed from daily averages.
@@ -70,6 +93,7 @@ struct HistoryDay: Identifiable {
         switch primaryUnit { case .wpm: return TypingRate.estimatedWPM(fromKPM: kpm); case .cpm: return cpm; case .unknown: return nil }
     }
     var estimatedPrimaryRate: Double? { primaryUnit == .wpm ? TypingRate.estimatedWPM(fromKPM: estimatedKPM) : nil }
+    var estimatedWPM: Double? { TypingRate.estimatedWPM(fromKPM: estimatedKPM) }
 }
 
 @MainActor final class AppModel: ObservableObject {
@@ -93,6 +117,9 @@ struct HistoryDay: Identifiable {
         metric.language = currentInputLanguageCode
         if !recentPresentationValid { metric.kpm = nil; metric.cpm = nil }
         return metric
+    }
+    var selectedMenuSpeed: MenuSpeedDisplay {
+        MenuSpeedDisplay(metric: selectedMenuMetric, evidence: recentEvidence, forceKPM: menuDisplay == "kpm")
     }
     @Published var phase = "idle"
     @Published var threshold = 1.5
@@ -798,12 +825,26 @@ struct HistoryDay: Identifiable {
     model.updateInputSource(chinese); model.refreshSnapshot()
     type([20, 20.2, 20.4, 20.6, 20.8], language: "zh", evidence: .probable)
     if model.selectedMenuMetric.primaryUnit != .cpm || model.selectedMenuMetric.primaryRate != nil || abs((model.selectedMenuMetric.kpm ?? 0) - 300) > 1e-3 {
-        failures.append("FAIL: global Chinese failed to retain KPM without fabricating CPM or falling back to WPM")
+        failures.append("FAIL: global Chinese lost observed keystroke rhythm or fabricated CPM")
+    }
+    if model.selectedMenuSpeed.unit != "WPM" || !model.selectedMenuSpeed.estimated || abs((model.selectedMenuSpeed.value ?? 0) - 60) > 1e-3 || model.probable.cpm != nil {
+        failures.append("FAIL: global Chinese did not show estimated WPM without inventing character output")
+    }
+    model.updateInputSource(english); model.refreshSnapshot()
+    if model.selectedMenuSpeed.unit != "WPM" || model.selectedMenuSpeed.value != nil {
+        failures.append("FAIL: language switch reused Chinese estimated WPM before new intervals")
+    }
+    model.updateInputSource(chinese); model.refreshSnapshot()
+    if model.selectedMenuSpeed.value != nil {
+        failures.append("FAIL: switching back revived a stale estimated WPM")
     }
     model.interruptConfirmed()
     type([30, 30.2, 30.4, 30.6, 30.8], language: "zh", characters: 1)
     if model.selectedMenuMetric.primaryUnit != .cpm || abs((model.selectedMenuMetric.primaryRate ?? 0) - 300) > 1e-3 {
         failures.append("FAIL: confirmed Chinese did not show current CPM")
+    }
+    if model.selectedMenuSpeed.unit != "CPM" || model.selectedMenuSpeed.estimated || abs((model.selectedMenuSpeed.value ?? 0) - 300) > 1e-3 {
+        failures.append("FAIL: confirmed Chinese character rate was replaced by estimated WPM")
     }
     var alternateMode = chinese; alternateMode.modeIdentifier = "latin"
     model.updateInputSource(alternateMode); model.refreshSnapshot()
@@ -854,6 +895,9 @@ struct HistoryDay: Identifiable {
     model.menuDisplay = "speed"
     if model.selectedMenuMetric.primaryUnit != .cpm || model.selectedMenuMetric.primaryRate != nil {
         failures.append("FAIL: combined KPM leaked into Chinese primary CPM")
+    }
+    if model.selectedMenuSpeed.unit != "WPM" || abs((model.selectedMenuSpeed.value ?? 0) - 24) > 1e-3 {
+        failures.append("FAIL: Chinese WPM used mixed-language KPM instead of the current language's rhythm")
     }
     model.updateInputSource(english); model.refreshSnapshot()
     type([20], language: "en")

@@ -71,11 +71,10 @@ import TypingCore
         if model.isPaused { title += " Ⅱ" }
         else if model.menuDisplay == "count" { title += " ≈\(compactKeystrokeCount(model.dailyEstimate.keys))" }
         else if model.menuDisplay == "speed" || model.menuDisplay == "kpm" {
-            let metric = model.selectedMenuMetric
-            let isKPM = model.menuDisplay == "kpm"
-            let value = isKPM ? metric.kpm : metric.primaryRate
-            let unit = isKPM ? "KPM" : metric.primaryUnit.rawValue
-            let prefix = isKPM ? "≈" : (metric.primaryUnit == .wpm ? "≈" : "")
+            let metric = model.selectedMenuSpeed
+            let value = metric.value
+            let unit = metric.unit
+            let prefix = metric.estimated ? "≈" : ""
             if unit == "—" { title += " —" }
             else { title += value.map { " \(prefix)\($0.formatted(.number.precision(.fractionLength(0)))) \(unit)" } ?? " — \(unit)" }
             if model.phase == "idle", value != nil { title += " ·" }
@@ -127,6 +126,10 @@ import TypingCore
         } else if window === settingsWindow { window.contentViewController = nil; settingsWindow = nil }
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag { showStatistics() }
+        return true
+    }
     func applicationDidBecomeActive(_ notification: Notification) {
         model?.monitor.checkSystemState(); model?.refreshSnapshot()
         model?.refreshHistoryIfVisible()

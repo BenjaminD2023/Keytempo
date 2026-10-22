@@ -25,12 +25,11 @@ private func primaryCadence(_ value: Double?, unit: PrimaryTypingUnit, includeUn
     return number + (includeUnit ? " \(unit.rawValue)" : "")
 }
 
-private func primaryTitle(_ unit: PrimaryTypingUnit) -> String {
-    switch unit {
-    case .wpm: return L("按键折算 WPM（估算）")
-    case .cpm: return L("真实字符 CPM")
-    case .unknown: return L("语言未识别")
-    }
+private func currentSpeedCadence(_ speed: MenuSpeedDisplay, includeUnit: Bool = true) -> String {
+    guard speed.unit != "—" else { return "—" }
+    let measured = speed.value.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
+    let number = measured.map { (speed.estimated ? "≈" : "") + cadence($0) } ?? "—"
+    return number + (includeUnit ? " \(speed.unit)" : "")
 }
 
 private func elapsed(_ seconds: Double) -> String {
@@ -92,7 +91,7 @@ struct MenuContent: View {
                 }
                 GridRow {
                     Text(L("今日主要速度（当前语言）"))
-                    Text(primaryCadence(model.probable.todayPrimaryRate, unit: model.probable.primaryUnit))
+                    Text(primaryCadence(model.probable.todayEstimatedWPM, unit: .wpm))
                         .monospacedDigit().foregroundStyle(AppStyle.estimated)
                 }
                 GridRow {
@@ -137,6 +136,7 @@ struct MenuContent: View {
 
     private var menuMetricExplanation: String {
         if model.menuDisplay == "kpm" { return L("KPM 合并全部记录语言的近期输入间隔，使用完整真实时长；空格不计入。") }
+        if model.recentEvidence == .probable { return L("所有输入语言统一按五次操作折算 WPM，含组合与编辑，不代表实际词数或上屏字数。") }
         switch model.selectedMenuMetric.primaryUnit {
         case .wpm: return L("WPM 按五次有效操作折算，含组合与编辑，不代表实际词数。")
         case .cpm: return L("CPM 只使用真实上屏字符；全局监听无法从拼音敲键推算字符。")
@@ -146,11 +146,12 @@ struct MenuContent: View {
 
     private var currentSpeed: some View {
         let metric = model.selectedMenuMetric
+        let speed = model.selectedMenuSpeed
         let isKPM = model.menuDisplay == "kpm"
-        let value = isKPM ? model.estimatedRecentKPM : metric.primaryRate
+        let value = speed.value
         let isGlobal = isKPM || model.recentEvidence == .probable
         return VStack(alignment: .leading, spacing: 3) {
-            Text(isKPM ? kpmCadence(model.estimatedRecentKPM) : primaryCadence(value, unit: metric.primaryUnit))
+            Text(currentSpeedCadence(speed))
                 .font(.system(size: 30, weight: .medium, design: .rounded)).monospacedDigit()
             HStack(spacing: 6) {
                 Text(isKPM ? L("全部记录语言") : model.languageName(metric.language))
@@ -167,8 +168,7 @@ struct MenuContent: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             if value == nil {
-                Text(metric.primaryUnit == .cpm && isGlobal && !isKPM
-                     ? L("不可用：缺少真实上屏数据") : L("当前输入段数据不足"))
+                Text(L("当前输入段数据不足"))
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -247,7 +247,7 @@ struct StatisticsView: View {
                         Text(L("全局估算只接受有编辑上下文证据的敲键。权限不足、过期上下文、终端或不受支持的编辑器可能无法统计。没有事件不能证明没有打字。"))
                         Text("\(model.currentApp) · \(L(model.contextDescription))")
                             .font(.caption).foregroundStyle(.secondary)
-                        Text(L("主要单位随输入语言切换：字母语言使用估算 WPM，字符语言使用真实 CPM。全局模式没有真实上屏数据时，CPM 显示不可用。"))
+                        Text(L("全局速度统一使用估算 WPM；真实 CPM 仅在有实际上屏数据的接入路径显示。"))
                             .font(.callout).foregroundStyle(.secondary)
                     }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
                 }
@@ -293,15 +293,11 @@ struct StatisticsView: View {
         return options.first?.id ?? model.currentInputLanguageCode
     }
 
-    private var historyUnit: PrimaryTypingUnit { TypingRate.primaryUnit(forLanguage: selectedHistoryLanguage) }
     private var selectedHistoryRows: [HistoryDay] {
         model.history.filter { $0.language == selectedHistoryLanguage }.sorted { $0.day < $1.day }
     }
     private var historyHasRates: Bool {
-        selectedHistoryRows.contains { $0.primaryRate != nil || $0.estimatedPrimaryRate != nil }
-    }
-    private var historyConfirmedLabel: String {
-        historyUnit == .wpm ? L("已确认敲键折算（估算）") : L("真实上屏")
+        selectedHistoryRows.contains { $0.estimatedWPM != nil }
     }
 
     private var historyGranularityLabel: String {
@@ -375,27 +371,23 @@ struct StatisticsView: View {
                             }
                         }.frame(maxWidth: 300)
                         Spacer()
-                        Text(primaryTitle(historyUnit)).font(.callout).foregroundStyle(.secondary)
+                        Text(L("按键折算 WPM（估算）")).font(.callout).foregroundStyle(.secondary)
                     }
-                    Text(L("每次只绘制一种输入语言，WPM 与 CPM 不混合。缺少真实上屏或样本不足的周期不会绘制为 0。"))
+                    Text(L("图表仅显示所选语言的估算 WPM；接入路径的真实 CPM 见下方明细，不与 WPM 叠加。"))
                         .font(.caption).foregroundStyle(.secondary)
                     if historyHasRates {
                         historyChart.id(selectedHistoryLanguage)
                     } else {
                         VStack(spacing: 10) {
                             Image(systemName: "chart.bar.xaxis").font(.system(size: 32)).foregroundStyle(.tertiary)
-                            Text(historyUnit == .unknown ? L("语言未识别，主要速度不可用") : L("尚无可展示的速度数据"))
+                            Text(L("尚无可展示的速度数据"))
                                 .font(.headline)
-                            if historyUnit == .cpm {
-                                Text(L("不可用：缺少真实上屏数据，或尚未达到最小样本要求。"))
-                                    .font(.callout).foregroundStyle(.secondary)
-                            }
                         }.frame(maxWidth: .infinity).frame(height: 210)
                     }
                     combinedHistoryTable
                     historyTable
                 }
-                Text(L("历史按所选周期与输入源语言分别汇总，不跨语言平均 WPM／CPM。旧记录语言未知，只保留原敲键与时长。"))
+                Text(L("历史按所选周期和输入语言分别汇总估算 WPM；不同语言不混合，独立 KPM 保留。"))
                     .font(.caption).foregroundStyle(.secondary)
                 Text(L("速度按汇总数量与实际覆盖时长计算，不直接平均各日速度。不同统计规则保留在 CSV 中，不能视为完全可比。"))
                     .font(.caption).foregroundStyle(.secondary)
@@ -408,23 +400,17 @@ struct StatisticsView: View {
     private var historyChart: some View {
         Chart {
             ForEach(selectedHistoryRows) { day in
-                if let rate = day.primaryRate {
-                    BarMark(x: .value(L("本地日期"), day.day), y: .value(historyUnit.rawValue, rate))
-                        .foregroundStyle(by: .value(L("来源"), historyConfirmedLabel))
-                        .position(by: .value(L("来源"), historyConfirmedLabel))
-                }
-                if let rate = day.estimatedPrimaryRate {
-                    BarMark(x: .value(L("本地日期"), day.day), y: .value(historyUnit.rawValue, rate))
-                        .foregroundStyle(by: .value(L("来源"), L("上下文估算")))
-                        .position(by: .value(L("来源"), L("上下文估算")))
+                if let rate = day.estimatedWPM {
+                    BarMark(x: .value(L("本地日期"), day.day), y: .value("WPM", rate))
+                        .foregroundStyle(by: .value(L("来源"), L("全局估算")))
                 }
             }
         }
         .chartForegroundStyleScale(
-            domain: historyUnit == .wpm ? [historyConfirmedLabel, L("上下文估算")] : [historyConfirmedLabel],
-            range: historyUnit == .wpm ? [AppStyle.confirmed, AppStyle.estimated] : [AppStyle.confirmed]
+            domain: [L("全局估算")],
+            range: [AppStyle.estimated]
         )
-        .chartYAxisLabel(primaryTitle(historyUnit))
+        .chartYAxisLabel(L("按键折算 WPM（估算）"))
         .chartXAxis {
             AxisMarks(values: .automatic(desiredCount: model.historyDays == 7 ? 7 : 6)) { value in
                 AxisGridLine()
@@ -434,7 +420,7 @@ struct StatisticsView: View {
             }
         }
         .frame(height: 235)
-        .accessibilityLabel(L("所选语言的主要速度趋势，%@", historyGranularityLabel))
+        .accessibilityLabel(L("所选语言的估算 WPM 趋势，%@", historyGranularityLabel))
     }
 
     private struct CombinedHistoryDay: Identifiable {
@@ -492,7 +478,7 @@ struct StatisticsView: View {
                     Text(historyPeriodColumn)
                     Text(L("输入语言"))
                     Text(L("主要速度 · 接入路径"))
-                    Text(L("主要速度 · 全局估算"))
+                    Text(L("按键折算 WPM（全局估算）"))
                     Text(L("KPM（该语言估算）"))
                     Text(L("敲键数量（估算）"))
                 }.font(.caption.weight(.semibold)).foregroundStyle(.secondary)
@@ -502,7 +488,7 @@ struct StatisticsView: View {
                         Text(historyPeriod(day.day)).help(L("%@ 至 %@", day.day, day.periodEnd.isEmpty ? day.day : day.periodEnd))
                         Text(model.languageName(day.language))
                         Text(primaryCadence(day.primaryRate, unit: day.primaryUnit))
-                        Text(day.primaryUnit == .cpm ? L("不可用") : primaryCadence(day.estimatedPrimaryRate, unit: day.primaryUnit))
+                        Text(primaryCadence(day.estimatedWPM, unit: .wpm))
                         Text(cadence(day.estimatedKPM))
                         Text(compactKeystrokeCount(day.estimatedKeys)).help(day.estimatedKeys.formatted())
                     }.font(.callout).monospacedDigit()
@@ -564,7 +550,7 @@ struct StatisticsView: View {
                 method(L("只累计观察到的间隔"), L("同一输入段里 n 次有效操作产生 n−1 个可测间隔。时长等于末次与首次操作的时间差；停止输入不会追加等待时间。命令、导航、焦点切换、权限中断和长停顿会切段。"))
                 method(L("自适应段落，保留真实时间"), L("使用有界近期间隔样本的中位数与 MAD 估计节奏，并识别新的稳定慢速候选。阈值只判断是否连续；接受的间隔完整计时。系数是可验证的启发式，不代表最佳识别精度。"))
                 method(L("辅助节奏与编辑"), L("辅助 KPM = 60 × 段内有效间隔数 ÷ 段内真实秒数，包含已接受的组合与编辑过程。删除另计，不视为新增文字或错误。“文字敲键 KPM”只连接文字输入，编辑会切断这一指标。"))
-                method(L("主要速度与语言"), L("字母语言的主要速度为按键折算 WPM = 输入过程 KPM ÷ 5，始终标为估算，包含组合与编辑，不代表真实词数。字符语言的主要速度为真实上屏 CPM，无法取得真实提交数据时显示不可用。输入源语言变化会切段，历史按语言独立汇总。"))
+                method(L("主要速度与语言"), L("全局主要速度对各输入语言统一使用按键折算 WPM = 输入过程 KPM ÷ 5，包含组合与编辑，不代表实际词数或汉字数。真实提交路径保留实际 CPM。输入源语言变化会切段，历史估算 WPM 按语言独立汇总，不与真实 CPM 叠加。"))
                 method(L("真实字符 CPM 的时间口径"), L("字符按真实提交的扩展字素簇计数。一条被接受且具备提交覆盖证据的输入间隔，使用其末端操作实际提交的全部字符数与该间隔真实时长；批量上屏按整批字符计数。首个事件的提交只增加累计字符，不凭空生成速率。组合或编辑没有提交时字符增量为零，其有效过程时间仍计入分母。不能把逐键 n−1 修正机械套到字符数。"))
                 method(L("样本与停止"), L("最近速度至少需要 4 个有效间隔与 0.5 秒覆盖时长；短段与孤立输入仍保留累计。CPM 的分母仅使用真实提交路径覆盖的间隔。停止后数值冻结并标为最近已停止，等待不增加时长，也不会拉低速度。"))
                 method(L("快捷键与未知用途"), L("Command／Control 组合键与已识别的命令、导航会排除并切段。已接入文本区还使用实际命令回调识别用途。纯全局元数据无法识别所有自定义快捷键；证据不足或用途不明时保持未知，不宣称完整识别。"))
@@ -592,8 +578,14 @@ private struct MetricCard: View {
     var totals: MetricDisplay? = nil
     var recentKPM: Double? = nil
     private var totalsMetric: MetricDisplay { totals ?? metric }
+    private var displaySpeed: MenuSpeedDisplay {
+        MenuSpeedDisplay(metric: metric, evidence: isGlobal ? .probable : .confirmed)
+    }
 
     private var rateDescription: String {
+        if isGlobal && displaySpeed.unit == "WPM" {
+            return displaySpeed.value == nil ? L("最近速度 · 数据不足") : L("按键折算速度（估算，含组合与编辑）")
+        }
         switch metric.primaryUnit {
         case .wpm:
             return metric.primaryRate == nil ? L("最近速度 · 数据不足") : L("按键折算速度（估算，含组合与编辑）")
@@ -613,15 +605,21 @@ private struct MetricCard: View {
                     Text(L(subtitle)).font(.caption).foregroundStyle(.secondary)
                 }
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(primaryCadence(metric.primaryRate, unit: metric.primaryUnit, includeUnit: false))
+                    Text(currentSpeedCadence(displaySpeed, includeUnit: false))
                         .font(.system(size: 42, weight: .medium, design: .rounded)).monospacedDigit()
-                    if metric.primaryUnit != .unknown {
-                        Text(metric.primaryUnit.rawValue).font(.callout).foregroundStyle(.secondary)
+                    if displaySpeed.unit != "—" {
+                        Text(displaySpeed.unit).font(.callout).foregroundStyle(.secondary)
                     }
                 }
                 Text(rateDescription).font(.caption).foregroundStyle(.secondary)
+                if isGlobal && displaySpeed.unit == "WPM" {
+                    Text(L("所有输入语言统一按五次操作折算 WPM，含组合与编辑，不代表实际词数或上屏字数。"))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Divider()
-                metricRow(L("今日主要速度（当前语言）"), primaryCadence(metric.todayPrimaryRate, unit: metric.primaryUnit))
+                metricRow(L("今日主要速度（当前语言）"), isGlobal
+                          ? primaryCadence(metric.todayEstimatedWPM, unit: .wpm)
+                          : primaryCadence(metric.todayPrimaryRate, unit: metric.primaryUnit))
                 metricRow(L("今日合并敲键数量"), compactKeystrokeCount(totalsMetric.keys)).help(totalsMetric.keys.formatted())
                 metricRow(L("其中编辑操作"), compactKeystrokeCount(totalsMetric.edits)).help(totalsMetric.edits.formatted())
                 metricRow(L("其中组合操作"), compactKeystrokeCount(totalsMetric.composition)).help(totalsMetric.composition.formatted())
@@ -683,7 +681,7 @@ struct SettingsView: View {
             Section(L("运行")) {
                 Toggle(L("登录时启动 Keytempo"), isOn: Binding(get: { model.launchAtLogin }, set: { model.setLogin($0) }))
                 Picker(L("菜单栏显示"), selection: $model.menuDisplay) {
-                    Text(L("主要速度（估算 WPM／字符 CPM）")).tag("speed")
+                    Text(L("主要速度（统一估算 WPM／接入路径 CPM）")).tag("speed")
                     Text(L("敲键节奏 KPM")).tag("kpm")
                     Text(L("今日敲键数量")).tag("count")
                     Text(L("仅图标")).tag("icon")
