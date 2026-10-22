@@ -23,6 +23,7 @@ Already published signed archives, source tags and download URLs retain their or
 - Recover short input bursts after an Accessibility context lease expires: withhold the stale context, query it again, and replay recent events at their original times only after fresh metadata confirms the same focused control. Changed focus, source, permissions, commands and other interruption boundaries cannot revive the queued input.
 - Resolve focus through bounded application, system and focused-window queries, validating the owning process before using a control. Recognize independently supported editable, value-setter or selected-text-setter metadata without reading the attributes' text values; selectable read-only text remains insufficient.
 - Retry transient focus failures twice with short bounded delays before returning to event-triggered backoff, and reject query results from an application or input source that changed while the query was running.
+- Recheck noneditable focus metadata on later input events with a short lease, even when an application accepts focus-notification registration, so missing descendant notifications cannot keep a stale exclusion for thirty seconds.
 - Preserve an existing probable Chinese composition state when `=`, `-`, `[` or `]` pages candidates, so subsequent candidate selection is not lost. These keys retain their ordinary text meaning outside that bounded state; spaces remain excluded from global counts.
 
 ### Added

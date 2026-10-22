@@ -169,7 +169,7 @@ final class FocusContext {
             let editable = ready && enabled && textRole && editEvidence && !secure && !uncertainApp
             let reason = !trusted ? "未获得辅助功能权限；全局输入不进入有效速度" : !ready ? "AX 查询暂未确认焦点；上下文未知" : secure ? "安全文本区域：不统计" : uncertainApp ? "终端或模式编辑器：未接入用途适配器" : editable ? "可编辑控件元数据；仅估算，不能证明插入文字" : "未确认可编辑文本区域"
             let resolvedMetadata = ready ? Metadata(pid: pid, bundleID: bundle, role: role, subrole: subrole, enabled: enabled, editEvidence: editEvidence, source: source) : nil
-            let value = Snapshot(version: requestVersion, bundleID: bundle, appName: name, role: role, editable: editable, ready: ready, reason: reason, expires: ProcessInfo.processInfo.systemUptime + (hasNotifications ? 30 : 0.75), inputMethod: source.inputMethod, languageCode: source.languageCode, validSince: requestSince, querySummary: result?.summary ?? "AX permission unavailable")
+            let value = Snapshot(version: requestVersion, bundleID: bundle, appName: name, role: role, editable: editable, ready: ready, reason: reason, expires: ProcessInfo.processInfo.systemUptime + Self.leaseDuration(editable: editable, notifications: hasNotifications), inputMethod: source.inputMethod, languageCode: source.languageCode, validSince: requestSince, querySummary: result?.summary ?? "AX permission unavailable")
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.queryingVersion = nil
@@ -243,6 +243,13 @@ final class FocusContext {
         return Double(1 << max(0, min(3, failureCount - 3)))
     }
 
+    private static func leaseDuration(editable: Bool, notifications: Bool) -> Double {
+        // Registration success does not prove an app reports every descendant
+        // focus change. Negative evidence gets a short event-triggered lease,
+        // so an IME wrapper or non-editor focus cannot suppress typing for 30 s.
+        editable && notifications ? 30 : 0.75
+    }
+
     /// In-memory lease/refresh checks; the opaque AX objects are never queried
     /// and no keyboard or system notification is posted by these checks.
     static func exerciseChecks() -> [String] {
@@ -267,6 +274,8 @@ final class FocusContext {
         expect(retryDelay(failureCount: 1, transient: true) == 0.04 && retryDelay(failureCount: 2, transient: true) == 0.12, "transient focus failures get two bounded short retries")
         expect(retryDelay(failureCount: 3, transient: true) == 1 && retryDelay(failureCount: 6, transient: true) == 8, "persistent focus failures return to event-driven backoff")
         expect(retryDelay(failureCount: 1, transient: false) >= 1, "permission or unsupported failures do not trigger fast retries")
+        expect(leaseDuration(editable: false, notifications: true) == 0.75, "negative context cannot remain sticky for a long notification lease")
+        expect(leaseDuration(editable: true, notifications: false) == 0.75 && leaseDuration(editable: true, notifications: true) == 30, "only editable context with focus notifications gets the long lease")
 
         let context = FocusContext()
         var invalidations = 0
