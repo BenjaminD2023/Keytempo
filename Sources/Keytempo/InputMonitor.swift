@@ -14,6 +14,9 @@ final class InputMonitor {
     private(set) var currentAppName = "—"
     private(set) var contextSummary = "尚未开始"
     var contextQuerySummary: String { context.snapshot.querySummary }
+    var usesChineseKeyboardEstimate: Bool {
+        chineseKeyboardCompatibilityEnabled && contextSummary == Self.chineseKeyboardCompatibilitySummary
+    }
     private(set) var inputSourceSummary = "—"
     private(set) var status = "尚未开始"
     private(set) var capturedEvents: UInt64 = 0

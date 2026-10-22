@@ -671,6 +671,7 @@ struct HistoryDay: Identifiable {
         }
         else if !localPath && (!hasInputPermission || !hasAccessibilityPermission) { nextStatus = "权限不可用 · 全局估算已停止" }
         else if unavailable && !localPath { nextStatus = monitor.status }
+        else if monitor.usesChineseKeyboardEstimate && !localPath { nextStatus = monitor.status }
         else if phase == "idle" { nextStatus = "已停止／未观察到输入 · 最近节奏已冻结" }
         else if phase == "typing" { nextStatus = "正在统计 · \(localPath ? "已确认" : "估算")输入段" }
         else { nextStatus = "候选输入段 · 数据不足" }
