@@ -16,6 +16,7 @@ public struct ProbableCompositionTracker: Sendable {
     private let maximumGap: Double
     private static let letters: Set<Int64> = [0,1,2,3,4,5,6,7,8,9,11,12,13,14,15,16,17,31,32,34,35,37,38,40,45,46]
     private static let arrows: Set<Int64> = [123,124,125,126]
+    private static let candidatePaging: Set<Int64> = [24,27,33,30]
 
     public init(maximumGap: Double = 3) {
         self.maximumGap = maximumGap.isFinite ? max(0.25, min(6, maximumGap)) : 3
@@ -57,6 +58,12 @@ public struct ProbableCompositionTracker: Sendable {
 
         let plain = !shift && !option
         let composition = inputMethod && plain && isActive
+        // Chinese candidate rows can be paged with =, -, [ and ]. Preserve
+        // only an existing valid IME hypothesis; otherwise these remain text.
+        if composition && Self.candidatePaging.contains(key) {
+            lastTime = time
+            return .classified(.composition, .probable)
+        }
         let result = MetadataClassifier.classify(key: key, command: false, control: false,
                                                  synthetic: false, editable: true,
                                                  inputMethod: inputMethod && plain, valid: true,

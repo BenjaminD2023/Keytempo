@@ -38,6 +38,59 @@ struct ProbableCompositionTrackerTests {
         }
     }
 
+    @Test func candidatePagingPreservesTheBoundedHypothesisUntilSelection() {
+        for paging: Int64 in [24,27,33,30] {
+            for selection: Int64 in [18,36,76] {
+                var tracker = ProbableCompositionTracker()
+                _ = classify(0, at: 0, tracker: &tracker)
+                checkEqual(classify(paging, at: 2.9, tracker: &tracker), .classified(.composition, .probable))
+                checkTrue(tracker.isActive)
+                checkEqual(classify(paging, at: 5.8, tracker: &tracker), .classified(.composition, .probable))
+                checkEqual(classify(selection, at: 6, tracker: &tracker), .classified(.composition, .probable))
+                checkTrue(!tracker.isActive)
+                checkEqual(classify(36, at: 6.2, tracker: &tracker), .classified(.unknown, .unknown))
+            }
+        }
+    }
+
+    @Test func pagingCharactersOutsideCompositionKeepTheirTextMeaning() {
+        for paging: Int64 in [24,27,33,30] {
+            for ime in [false, true] {
+                var tracker = ProbableCompositionTracker()
+                if !ime { _ = classify(0, at: 0, tracker: &tracker, inputMethod: false) }
+                checkEqual(classify(paging, at: 0.2, tracker: &tracker, inputMethod: ime), .classified(.textEntry, .probable))
+                checkTrue(!tracker.isActive)
+                checkEqual(classify(36, at: 0.4, tracker: &tracker, inputMethod: ime), .classified(.unknown, .unknown))
+            }
+            for modifiers in [(true, false), (false, true), (true, true)] {
+                var tracker = ProbableCompositionTracker()
+                _ = classify(0, at: 0, tracker: &tracker)
+                checkEqual(classify(paging, at: 0.2, tracker: &tracker, shift: modifiers.0, option: modifiers.1), .classified(.textEntry, .probable))
+                checkTrue(!tracker.isActive)
+                checkEqual(classify(36, at: 0.4, tracker: &tracker), .classified(.unknown, .unknown))
+            }
+        }
+    }
+
+    @Test func pagingNeverRevivesAnInvalidatedCompositionHypothesis() {
+        for paging: Int64 in [24,27,33,30] {
+            for boundary in 0..<10 {
+                var tracker = ProbableCompositionTracker()
+                _ = classify(0, at: 0, tracker: &tracker)
+                if boundary == 9 { tracker.reset() }
+                let result = classify(paging, at: boundary == 1 ? 3.01 : 0.2, tracker: &tracker,
+                                      context: boundary == 0 ? 2 : 1,
+                                      command: boundary == 2, control: boundary == 3,
+                                      synthetic: boundary == 4, repeated: boundary == 5,
+                                      editable: boundary != 6, inputMethod: boundary != 7,
+                                      valid: boundary != 8)
+                checkTrue(result != .classified(.composition, .probable))
+                checkTrue(!tracker.isActive)
+                checkEqual(classify(36, at: 3.2, tracker: &tracker), .classified(.unknown, .unknown))
+            }
+        }
+    }
+
     @Test func selectionWithoutCompositionEvidenceRemainsUncertain() {
         for key: Int64 in [18, 19, 123, 124, 125, 126, 36, 76, 48] {
             var tracker = ProbableCompositionTracker()
@@ -143,21 +196,21 @@ struct ProbableCompositionTrackerTests {
     @Test func candidateOperationsIncreaseEstimatedKPMWithoutInventingCharacters() {
         var tracker = ProbableCompositionTracker()
         var engine = StatisticsEngine(timeZone: TimeZone(secondsFromGMT: 0)!)
-        for (index, key) in [Int64(0), 45, 125, 124, 36].enumerated() {
+        for (index, key) in [Int64(0), 45, 24, 27, 33, 30, 125, 124, 36].enumerated() {
             let time = Double(index) * 0.2
             let decision = classify(key, at: time, tracker: &tracker)
             guard case let .classified(category, evidence) = decision else { continue }
             _ = engine.record(ClassifiedInput(time: time, date: base.addingTimeInterval(time), context: 1,
                                              category: category, evidence: evidence, source: .global, language: "zh"))
         }
-        let measured = engine.snapshot(now: 0.8).probable
-        checkEqual(measured.keys, 5)
-        checkEqual(measured.composition, 3)
-        checkEqual(measured.intervals, 4)
-        checkEqual(measured.seconds, 0.8, accuracy: 1e-9)
+        let measured = engine.snapshot(now: 1.6).probable
+        checkEqual(measured.keys, 9)
+        checkEqual(measured.composition, 7)
+        checkEqual(measured.intervals, 8)
+        checkEqual(measured.seconds, 1.6, accuracy: 1e-9)
         checkEqual(measured.rhythmKPM!, 300, accuracy: 1e-6)
         checkEqual(measured.characters, 0)
         checkNil(measured.characterCPM)
-        checkEqual(engine.snapshot(now: 0.8).confirmed.keys, 0)
+        checkEqual(engine.snapshot(now: 1.6).confirmed.keys, 0)
     }
 }
