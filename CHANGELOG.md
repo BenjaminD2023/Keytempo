@@ -20,6 +20,7 @@ Already published signed archives, source tags and download URLs retain their or
 
 ### Fixed
 
+- Retain the latest usable estimated rate as recent/stopped across same-source focus, command and inspection-window boundaries, while ending timing continuity. Opening Keytempo no longer makes a successfully recorded rate disappear; incompatible source, permission and explicit-reset boundaries still clear it.
 - Recover short input bursts after an Accessibility context lease expires: withhold the stale context, query it again, and replay recent events at their original times only after fresh metadata confirms the same focused control. Changed focus, source, permissions, commands and other interruption boundaries cannot revive the queued input.
 - Resolve focus through bounded application, system and focused-window queries, validating the owning process before using a control. Recognize independently supported editable, value-setter or selected-text-setter metadata without reading the attributes' text values; selectable read-only text remains insufficient.
 - Retry transient focus failures twice with short bounded delays before returning to event-triggered backoff, and reject query results from an application or input source that changed while the query was running.
@@ -28,9 +29,10 @@ Already published signed archives, source tags and download URLs retain their or
 
 ### Added
 
+- Add an opt-in Chinese IME keyboard-activity compatibility mode for apps whose focused-editor metadata is unavailable. A fresh frontmost-app/source lease is required; known noneditable controls, mode editors, app/language exclusions, permissions and existing shortcut/space/repeat/synthetic filters remain enforced. This mode may include unrecognized non-text activity and never supplies Chinese character counts or CPM. Its aggregates use a separate `-ime-fallback` rule.
 - Add optional content-free diagnostics for the focus-query route, AX error stages, and context-confirmed replay/discard counts. The temporary context queue is limited to 64 event summaries and 350 milliseconds, with explicit loss on expiry or interruption.
 
-Global Chinese speed remains an estimate on the same WPM scale as other languages. Scripted metadata and integration checks do not establish complete physical-input coverage in WeChat, ChatGPT or other third-party applications.
+Global Chinese speed remains an estimate on the same WPM scale as other languages. A physical ChatGPT test produced accepted estimated input and a usable rate, while the tested WeChat version supplied no focused-editor evidence. Compatibility-mode physical coverage in WeChat remains pending; scripted metadata checks do not establish support for every app or Chinese input path.
 
 ## [0.3.0] - 2026-10-22
 

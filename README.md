@@ -6,7 +6,7 @@ A native macOS menu bar app for understanding your everyday typing rhythm. Built
 
 ## What it measures
 
-Keytempo separates **context-based estimates** from **confirmed input**. Global keyboard monitoring can estimate activity in supported editable controls, but it cannot prove that every key inserted text or obtain Chinese character commits. Confirmed operation and character counts currently come from the app's built-in validation editor.
+Keytempo separates **context-based estimates** from **confirmed input**. Global keyboard monitoring can estimate activity in supported editable controls, but it cannot prove that every key inserted text or obtain Chinese character commits. An optional Chinese IME compatibility mode can also estimate keyboard activity when focused-control metadata is unavailable, with reduced ability to exclude non-text operations. Confirmed operation and character counts currently come from the app's built-in validation editor.
 
 | Metric | Definition | Availability |
 |---|---|---|
@@ -16,7 +16,7 @@ Keytempo separates **context-based estimates** from **confirmed input**. Global 
 
 The primary menu bar rate shows the **current input segment**, updating about once per second while active. Global estimates use the same **estimated WPM = KPM ÷ 5** scale for every input language, including Chinese. This describes accepted keystroke rhythm, not actual word or Chinese-character output; Pinyin keys are never converted into invented committed characters. Actual CPM remains available only through confirmed character-commit paths. Switching input source clears the current rate until a fresh matching sample is available; an old English rate is not retained as the Chinese result. KPM remains available independently and combines up to 128 recent accepted interval batches across all recorded languages, without joining the gaps between sources. The next accepted input after a pause longer than 30 seconds starts a fresh sample; waiting itself never changes the frozen rate.
 
-At least four accepted intervals and 0.5 seconds are needed to display a rate. A segment's first operation still counts toward totals. During a natural idle pause, the measured rate freezes and is marked as recent/stopped; waiting does not add typing time or reduce it.
+At least four accepted intervals and 0.5 seconds are needed to display a rate. A segment's first operation still counts toward totals. When input stops or a same-source focus/command boundary occurs, the last available estimated rate remains visible as recent/stopped, including when opening Keytempo to inspect it. The boundary still ends timing continuity; the next input does not bridge across it. Source changes, lost permissions and explicit resets clear incompatible samples. Waiting does not add typing time or reduce the measured rate.
 
 The menu popup emphasizes the **past ten minutes' average estimated WPM**, with current speed below it and today's statistics retained. The ten-minute value combines accepted intervals across all recorded global input languages and divides their total interval count by their actual typing duration, then by five. It is not throughput over ten wall-clock minutes. The rolling window is session-only; the UI reports shorter observed coverage after launch, resume or reset. Idle waiting adds no typing time, although an old interval can leave the rolling window after ten minutes. A bounded-buffer coverage failure suppresses the rate rather than presenting a partial sample as complete.
 
@@ -28,7 +28,7 @@ The daily overview and menu popup show one **estimated keystroke counter** for e
 - English and Simplified Chinese app interfaces, independent of input-source language.
 - Select which input languages to record; selecting none stops recording.
 - Per-language 7-day, 30-day, 90-day, one-year and five-year history, separate KPM columns and CSV export.
-- Application exclusions, optional suspected-repeat/burst filtering and a diagnostic view without input content.
+- Application exclusions, optional Chinese IME compatibility and suspected-repeat/burst filtering, and a diagnostic view without input content.
 - A real `NSTextView` validation path for composition, editing and character-commit coverage.
 - Check for Updates, manual download/install and optional automatic checks/downloads through Sparkle.
 
@@ -50,7 +50,7 @@ For global estimates, allow Keytempo in **System Settings → Privacy & Security
 2. **Accessibility** checks focused-control roles and editability metadata.
 3. Return to Keytempo Settings and choose **Check permissions again**. If macOS still associates permissions with an older build, reselect the installed app and restart it.
 
-The built-in validation editor works without these global permissions. Secure Input, revoked permissions and unknown or expired contexts stop global classification; no events alone do not prove that you were idle.
+The built-in validation editor works without these global permissions. Secure Input and revoked permissions stop global classification. Strict mode also withholds unknown or expired text contexts; the optional compatibility mode below changes only the stated Chinese keyboard-activity coverage. No events alone do not prove that you were idle.
 
 ### Updates
 
@@ -58,7 +58,7 @@ Choose **Check for Updates…** in the app menu or Settings to check manually, t
 
 The 0.1.1 app (original app/tag `1.1.1`) does not contain an updater; install the first updater-enabled release manually once. Updates do not grant privacy permissions, bypass macOS approval or convert global Chinese keystrokes into confirmed CPM. Certificate signing and download signatures protect different parts of the update process. See [release instructions](docs/RELEASING.md) for publisher setup and known signing limits.
 
-Keytempo now uses `0.x` versions: historical `1.1.0` and `1.2.0` are documented as `0.1.0` and `0.2.0`; the new app is `0.3.0`. Existing signed `1.x` downloads and tags retain their original identifiers. Internal build numbers continue increasing, so `0.3.0` build 11 is newer for the updater than `1.2.1` build 10. See the [complete changelog and version mapping](CHANGELOG.md).
+Keytempo now uses `0.x` versions: historical `1.1.0` and `1.2.0` are documented as `0.1.0` and `0.2.0`; the latest public release is `0.3.0`, while the `0.3.1` fixes are under local validation. Existing signed `1.x` downloads and tags retain their original identifiers. Internal build numbers continue increasing, so `0.3.0` build 11 is newer for the updater than `1.2.1` build 10. See the [complete changelog and version mapping](CHANGELOG.md).
 
 ## Build and test
 
@@ -95,9 +95,19 @@ KPM = 60 × sum(accepted intervals) / sum(actual interval seconds)
 
 There is no fixed activity tail after a key, no continuously growing active-time clock, and no averaging of individual interval speeds. Median/MAD-based bounded rhythm samples help distinguish pauses and adapt to slower continuous typing. The coefficients are a tested baseline, not a claim of an optimal human model.
 
-Recognized Command/Control shortcuts, navigation, generated operations and uncertain contexts interrupt continuity. Shift/Option text entry, code, punctuation and repeated text are not rejected for their content. Deletions are separate editing activity, not an error rate. System-marked key repeats do not become independent manual keystrokes.
+Recognized Command/Control shortcuts, navigation and generated operations interrupt continuity. Uncertain text contexts also interrupt strict-mode classification. Shift/Option text entry, code, punctuation and repeated text are not rejected for their content. Deletions are separate editing activity, not an error rate. System-marked key repeats do not become independent manual keystrokes.
 
 Candidate keys may represent selection rather than new characters. A bounded input-method heuristic uses recent typing in an eligible editable context to count candidate digits, arrows and Return as **probable composition operations**. That estimates purpose; it does not observe marked text or prove a character commit. Without that context, navigation and ambiguous action keys remain excluded or unknown. Spaces are skipped by global count/KPM statistics; an otherwise valid space does not split continuity, and the next accepted interval retains its full actual duration. The confirmed editor still uses real commit callbacks, including genuine text or candidate confirmation, for character coverage.
+
+### Chinese IME compatibility mode
+
+**Settings → Input filtering → Chinese IME compatibility mode (keystroke estimate)** is off by default. Enable it if an app such as WeChat provides no usable focused-editor metadata. When the current source is a Chinese IME and a fresh frontmost-app/source identity is available, it can count eligible keyboard activity as estimated WPM/KPM without pretending to confirm text insertion. Identity checks are event-triggered with a 0.75-second lease, outside the keyboard callback. It does not count Chinese characters or supply CPM.
+
+This mode applies only while text-control evidence is unavailable. A known noneditable control, excluded app, unsupported terminal/mode editor, unselected language, Secure Input or missing permission still blocks recording. Recognized shortcuts, spaces, navigation/action keys, system repeats and known synthetic events remain excluded; this fallback does not infer candidate selection from unknown-context arrow or Return keys. The optional suspected-input guard still applies.
+
+The tradeoff is explicit: unrecognized non-text letter/number operations can enter the estimate when an app supplies no editor evidence. This is broader keyboard-activity coverage, not confirmed text input or complete macro detection. The UI identifies it as an unconfirmed-textbox estimate. Toggling the mode starts a separate counting rule (`-ime-fallback` suffix); existing aggregates remain intact and incompatible rates are not silently merged. Physical WeChat coverage of this fallback is still pending validation; see [current evidence](docs/VALIDATION.md).
+
+### Other input limits
 
 Paste, autocomplete and known synthetic events do not count as manual character output. Global metadata cannot identify every custom shortcut, macro or intercepted web key. Terminals, Vim modes, games and custom editors may remain unsupported or unknown. See [coverage and validation](docs/VALIDATION.md) and [adapter boundaries](docs/ADAPTERS.md).
 

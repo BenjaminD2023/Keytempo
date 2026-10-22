@@ -165,7 +165,7 @@ struct MenuContent: View {
         let isKPM = model.menuDisplay == "kpm"
         return VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
-                Text(L("当前速度")).font(.callout).foregroundStyle(.secondary)
+                Text(L(model.selectedSpeedIsRecent ? "最近输入速度" : "当前速度")).font(.callout).foregroundStyle(.secondary)
                 Spacer(minLength: 12)
                 Text(currentSpeedCadence(speed))
                     .font(.system(size: 17, weight: .medium)).monospacedDigit()
@@ -177,7 +177,7 @@ struct MenuContent: View {
                     Text(L("已接入路径"))
                 }
                 Spacer(minLength: 6)
-                Text(speed.value == nil ? L("当前输入段数据不足") : model.phase == "idle" ? L("最近已停止") : L("正在输入"))
+                Text(speed.value == nil ? L("当前输入段数据不足") : model.selectedSpeedIsRecent ? L("最近已停止") : L("正在输入"))
             }.font(.caption).foregroundStyle(.secondary)
             .help(model.currentInputLanguage)
         }
@@ -244,13 +244,13 @@ struct StatisticsView: View {
                 }
                 Text(L("当前输入语言：%@", model.currentInputLanguage))
                     .font(.callout).foregroundStyle(.secondary)
-                MetricCard(title: L("日常输入（估算）"), subtitle: L("全局监听 + 可编辑区域证据"), metric: model.probable, tint: AppStyle.estimated, isGlobal: true, totals: model.dailyEstimate, recentKPM: model.estimatedRecentKPM, todayAverageWPM: model.todayAverageWPM, todayAverageIsPartial: model.todayAverageIsPartial, todayAverageCoveredKeys: model.todayAverageCoveredKeys)
+                MetricCard(title: L("日常输入（估算）"), subtitle: L(model.chineseKeyboardCompatibilityEnabled ? "全局监听 · 中文键盘兼容模式" : "全局监听 + 可编辑区域证据"), metric: model.probable, tint: AppStyle.estimated, isGlobal: true, totals: model.dailyEstimate, recentKPM: model.estimatedRecentKPM, todayAverageWPM: model.todayAverageWPM, todayAverageIsPartial: model.todayAverageIsPartial, todayAverageCoveredKeys: model.todayAverageCoveredKeys, isRecentRate: model.recentSpeedIsFrozen || model.phase == "idle")
                 Text(L("当前速度按输入源语言显示；今日均速和累计合并全部记录语言。"))
                     .font(.caption).foregroundStyle(.secondary)
                 GroupBox {
                     VStack(alignment: .leading, spacing: 9) {
                         Label(L("覆盖范围"), systemImage: "scope").font(.headline)
-                        Text(L("全局估算只接受有编辑上下文证据的敲键。权限不足、过期上下文、终端或不受支持的编辑器可能无法统计。没有事件不能证明没有打字。"))
+                        Text(L(model.chineseKeyboardCompatibilityEnabled ? "中文输入源的焦点上下文无法查询时，以按键活动估算，可能包含非文本操作；已确认的非编辑区域仍排除。其他语言继续要求编辑上下文证据。权限不足、应用排除或安全输入时不统计。" : "全局估算只接受有编辑上下文证据的敲键。权限不足、过期上下文、终端或不受支持的编辑器可能无法统计。没有事件不能证明没有打字。"))
                         Text("\(model.currentApp) · \(L(model.contextDescription))")
                             .font(.caption).foregroundStyle(.secondary)
                         Text(L("全局速度统一使用估算 WPM；真实 CPM 仅在有实际上屏数据的接入路径显示。"))
@@ -586,6 +586,7 @@ private struct MetricCard: View {
     var todayAverageWPM: Double? = nil
     var todayAverageIsPartial = false
     var todayAverageCoveredKeys = 0
+    var isRecentRate = false
     private var totalsMetric: MetricDisplay { totals ?? metric }
     private var displaySpeed: MenuSpeedDisplay {
         MenuSpeedDisplay(metric: metric, evidence: isGlobal ? .probable : .confirmed)
@@ -593,6 +594,7 @@ private struct MetricCard: View {
 
     private var rateDescription: String {
         if isGlobal && displaySpeed.unit == "WPM" {
+            if displaySpeed.value != nil && isRecentRate { return L("最近输入速度 · 已停止（估算）") }
             return displaySpeed.value == nil ? L("最近速度 · 数据不足") : L("按键折算速度（估算，含组合与编辑）")
         }
         switch metric.primaryUnit {
@@ -722,6 +724,10 @@ struct SettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section(L("输入过滤")) {
+                Toggle(L("中文输入法兼容模式（按键估算）"), isOn: $model.chineseKeyboardCompatibilityEnabled)
+                    .onChange(of: model.chineseKeyboardCompatibilityEnabled) { _ in model.applySettings() }
+                Text(L("仅在中文输入源的焦点上下文无法查询时，改用按键活动估算 WPM，可能计入非文本操作。已确认的非编辑区域、快捷键、空格、自动重复与已识别的生成输入仍排除。不会统计实际汉字数。"))
+                    .font(.caption).foregroundStyle(.secondary)
                 Toggle(L("过滤疑似异常输入"), isOn: $model.suspectedInputFilteringEnabled)
                     .onChange(of: model.suspectedInputFilteringEnabled) { _ in model.applySettings() }
                 Text(L("排除长串同键与极端按键突发；无法判断文字是否乱打，也不能识别所有宏。误判时可关闭，系统连发与已知合成事件仍排除。"))

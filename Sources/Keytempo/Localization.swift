@@ -40,6 +40,12 @@ enum AppLanguage {
     private static let english: [String: String] = [
         "近 10 分钟平均": "10-min average",
         "当前速度": "Current speed",
+        "最近输入速度": "Recent typing speed",
+        "最近输入速度 · 已停止（估算）": "Recent typing speed · Stopped (estimated)",
+        "中文输入法兼容模式（按键估算）": "Chinese IME compatibility mode (keystroke estimate)",
+        "全局监听 · 中文键盘兼容模式": "Global monitoring · Chinese keyboard compatibility",
+        "中文输入源的焦点上下文无法查询时，以按键活动估算，可能包含非文本操作；已确认的非编辑区域仍排除。其他语言继续要求编辑上下文证据。权限不足、应用排除或安全输入时不统计。": "When focus context cannot be queried for a Chinese input source, estimate keyboard activity, which may include non-text actions. Known noneditable regions remain excluded. Other languages still require editable-context evidence. Missing permissions, excluded apps and Secure Input stop monitoring.",
+        "仅在中文输入源的焦点上下文无法查询时，改用按键活动估算 WPM，可能计入非文本操作。已确认的非编辑区域、快捷键、空格、自动重复与已识别的生成输入仍排除。不会统计实际汉字数。": "Only when focus context cannot be queried for a Chinese input source, estimate WPM from keyboard activity, which may include non-text actions. Known noneditable regions, shortcuts, spaces, system repeats and known generated input remain excluded. It does not count actual Chinese characters.",
         "今日累计": "Today",
         "今日平均速度": "Today's average",
         "今日平均（当前口径）": "Today's average (current rule)",

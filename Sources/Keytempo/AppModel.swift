@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import ServiceManagement
+import Carbon
 import TypingCore
 import TypingStore
 
@@ -128,6 +129,10 @@ struct HistoryDay: Identifiable {
     var selectedMenuSpeed: MenuSpeedDisplay {
         MenuSpeedDisplay(metric: selectedMenuMetric, evidence: recentEvidence, forceKPM: menuDisplay == "kpm")
     }
+    @Published private(set) var recentSpeedIsFrozen = false
+    var selectedSpeedIsRecent: Bool {
+        selectedMenuSpeed.value != nil && (recentSpeedIsFrozen || phase == "idle")
+    }
     @Published var phase = "idle"
     @Published var threshold = 1.5
     @Published var modelMedian = 0.0
@@ -149,6 +154,7 @@ struct HistoryDay: Identifiable {
     @Published var menuDisplay = UserDefaults.standard.string(forKey: "menuDisplay") ?? "speed"
     @Published var diagnosticsEnabled = false
     @Published var suspectedInputFilteringEnabled = UserDefaults.standard.object(forKey: "suspectedInputFilteringEnabled") as? Bool ?? true
+    @Published var chineseKeyboardCompatibilityEnabled = UserDefaults.standard.bool(forKey: "chineseKeyboardCompatibilityEnabled")
     @Published private(set) var suspiciousRepeatEvents: UInt64 = 0
     @Published private(set) var suspiciousBurstEvents: UInt64 = 0
     @Published var launchAtLogin = SMAppService.mainApp.status == .enabled
@@ -191,6 +197,7 @@ struct HistoryDay: Identifiable {
     private var pendingDiagnostics: [String] = []
     private let monitoringEnabled: Bool
     private var ownedAdapterExcluded = false
+    private var appliedExclusions: Set<String>?
     private var presentedInputSource: InputLanguages.Source?
     private var recentPresentationValid = false
     private var estimatedRhythm = RecentIntervalRhythm()
@@ -204,8 +211,8 @@ struct HistoryDay: Identifiable {
     private var activeHistoryRead: HistoryReadRequest?
     private var pendingHistoryRead: HistoryReadRequest?
 
-    static func rule(_ maximum: Double, suspectedInputFiltering: Bool = true) -> String {
-        "adaptive-v4-no-space-ime-quality-" + (suspectedInputFiltering ? "on" : "off") + "-max" + String(format: "%.1f", maximum)
+    static func rule(_ maximum: Double, suspectedInputFiltering: Bool = true, chineseKeyboardCompatibility: Bool = false) -> String {
+        "adaptive-v4-no-space-ime-quality-" + (suspectedInputFiltering ? "on" : "off") + "-max" + String(format: "%.1f", maximum) + (chineseKeyboardCompatibility ? "-ime-fallback" : "")
     }
     static func day(_ date: Date = Date()) -> String {
         let c = Calendar.current.dateComponents([.year, .month, .day], from: date)
@@ -215,7 +222,8 @@ struct HistoryDay: Identifiable {
         self.monitoringEnabled = monitoringEnabled
         let gap = UserDefaults.standard.object(forKey: "maximumGap") as? Double ?? 3
         let filterSuspected = UserDefaults.standard.object(forKey: "suspectedInputFilteringEnabled") as? Bool ?? true
-        engine = StatisticsEngine(config: SegmentationConfig(maximumGap: gap, ruleID: Self.rule(gap, suspectedInputFiltering: filterSuspected)), timeZone: .current)
+        let chineseCompatibility = UserDefaults.standard.bool(forKey: "chineseKeyboardCompatibilityEnabled")
+        engine = StatisticsEngine(config: SegmentationConfig(maximumGap: gap, ruleID: Self.rule(gap, suspectedInputFiltering: filterSuspected, chineseKeyboardCompatibility: chineseCompatibility)), timeZone: .current)
         // Keep the existing on-disk identity so renaming the app preserves history.
         let directory = dataDirectory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("TypingSpeed", isDirectory: true)
         databaseURL = directory.appendingPathComponent("statistics.sqlite")
@@ -228,17 +236,14 @@ struct HistoryDay: Identifiable {
         monitor.onInput = { [weak self] input in self?.receive(input) }
         monitor.onInterruption = { [weak self] reason in
             guard let self else { return }
-            self.interruptEngine(); self.status = reason; self.scheduleUI()
-            if self.diagnosticsEnabled {
-                self.pendingDiagnostics.append("中断 · \(reason)")
-                if self.pendingDiagnostics.count > 60 { self.pendingDiagnostics.removeFirst(self.pendingDiagnostics.count - 60) }
-            }
+            self.handleMonitoringInterruption(reason, capabilitiesAvailable: self.globalPresentationCapabilitiesAvailable)
         }
         monitor.onStatus = { [weak self] value in
             guard let self else { return }
             if !self.isPaused { self.status = value }; self.scheduleUI()
         }
         monitor.suspectedInputFilteringEnabled = filterSuspected
+        monitor.chineseKeyboardCompatibilityEnabled = chineseCompatibility
         updateExclusions()
         refreshInputLanguages()
         for name in [InputLanguages.sourceChanged, InputLanguages.policyChanged] {
@@ -274,7 +279,10 @@ struct HistoryDay: Identifiable {
         monitor.flushPendingInput()
         receive(input)
     }
-    func interruptConfirmed() { interruptEngine(); scheduleUI() }
+    func interruptConfirmed() {
+        interruptEngine(preservingRecentPresentation: canPreserveRecentGlobalPresentation(capabilitiesAvailable: globalPresentationCapabilitiesAvailable))
+        scheduleUI()
+    }
     private func receive(_ input: ClassifiedInput) {
         guard !isPaused, !sleeping, !clearing else { return }
         // Backwards event clocks cannot make an earlier session look recent.
@@ -289,10 +297,10 @@ struct HistoryDay: Identifiable {
             if deltas.contains(where: { $0.keys > 0 }) {
                 recentEvidence = input.evidence
                 recentPresentationValid = input.language == currentInputLanguageCode
+                recentSpeedIsFrozen = false
             }
         } else {
-            recentPresentationValid = false
-            estimatedRhythmHasFreshInterval = false
+            finishRecentPresentation(preserving: canPreserveRecentGlobalPresentation(capabilitiesAvailable: globalPresentationCapabilitiesAvailable))
         }
         let estimateDeltas = deltas.filter { $0.evidence == .probable }
         if estimateDeltas.contains(where: { $0.keys > 0 }) {
@@ -329,7 +337,7 @@ struct HistoryDay: Identifiable {
     }
     func receiveCommit(english: Int, chinese: Int, language: String = "und", unratedCharacters: Int = 0) {
         guard !isPaused, !sleeping, !clearing, !ownedAdapterExcluded else { return }
-        var row = StoredAggregate(day: Self.day(), timezone: TimeZone.current.identifier, rule: Self.rule(maximumGap, suspectedInputFiltering: suspectedInputFilteringEnabled), evidence: "confirmed", language: language)
+        var row = StoredAggregate(day: Self.day(), timezone: TimeZone.current.identifier, rule: Self.rule(maximumGap, suspectedInputFiltering: suspectedInputFilteringEnabled, chineseKeyboardCompatibility: chineseKeyboardCompatibilityEnabled), evidence: "confirmed", language: language)
         row.english = english; row.chinese = chinese; row.characters = max(0, unratedCharacters)
         accumulate(row); scheduleUI()
     }
@@ -478,19 +486,27 @@ struct HistoryDay: Identifiable {
     func updateExclusions() {
         let values = excludedAppsText.split(whereSeparator: { $0 == "\n" || $0 == "," }).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         ownedAdapterExcluded = values.contains(Bundle.main.bundleIdentifier ?? "local.benjamin.TypingSpeed")
-        monitor.updateExcludedApps(Set(values))
+        let selection = Set(values)
+        guard selection != appliedExclusions else { return }
+        appliedExclusions = selection
+        monitor.updateExcludedApps(selection)
+        interruptEngine()
     }
     func applySettings() {
         monitor.flushPendingInput()
         maximumGap = max(1, min(6, maximumGap))
-        let countingRule = Self.rule(maximumGap, suspectedInputFiltering: suspectedInputFilteringEnabled)
-        if engine.config.ruleID != countingRule { resetTenMinuteWindow() }
+        let countingRule = Self.rule(maximumGap, suspectedInputFiltering: suspectedInputFilteringEnabled, chineseKeyboardCompatibility: chineseKeyboardCompatibilityEnabled)
+        let countingRuleChanged = engine.config.ruleID != countingRule
+        if countingRuleChanged { resetTenMinuteWindow() }
         engine.updateConfig(SegmentationConfig(maximumGap: maximumGap, ruleID: countingRule))
         monitor.suspectedInputFilteringEnabled = suspectedInputFilteringEnabled
+        monitor.chineseKeyboardCompatibilityEnabled = chineseKeyboardCompatibilityEnabled
         updateExclusions()
+        if countingRuleChanged { interruptEngine() }
         monitor.diagnosticsEnabled = diagnosticsEnabled
         UserDefaults.standard.set(excludedAppsText, forKey: "excludedApps"); UserDefaults.standard.set(maximumGap, forKey: "maximumGap"); UserDefaults.standard.set(menuDisplay, forKey: "menuDisplay")
         UserDefaults.standard.set(suspectedInputFilteringEnabled, forKey: "suspectedInputFilteringEnabled")
+        UserDefaults.standard.set(chineseKeyboardCompatibilityEnabled, forKey: "chineseKeyboardCompatibilityEnabled")
         if !diagnosticsEnabled { diagnostics.removeAll(); pendingDiagnostics.removeAll() }
         flush(); refreshSnapshot()
     }
@@ -501,10 +517,35 @@ struct HistoryDay: Identifiable {
             if enabled && !launchAtLogin { status = "请在系统设置的登录项中允许 Keytempo" }
         } catch { status = "登录项设置失败：\(error.localizedDescription)"; launchAtLogin = SMAppService.mainApp.status == .enabled }
     }
-    private func interruptEngine() {
+    private var globalPresentationCapabilitiesAvailable: Bool {
+        monitor.hasInputPermission && monitor.hasAccessibilityPermission && !IsSecureEventInputEnabled()
+    }
+    private func canPreserveRecentGlobalPresentation(capabilitiesAvailable: Bool, source: InputLanguages.Source = InputLanguages.current) -> Bool {
+        capabilitiesAvailable && !isPaused && !sleeping && !clearing &&
+            recentEvidence == .probable && recentPresentationValid &&
+            presentedInputSource == source
+    }
+    /// Capability metadata is supplied explicitly so isolated checks do not
+    /// depend on this Mac's TCC state. No input classification is changed here.
+    fileprivate func handleMonitoringInterruption(_ reason: String, capabilitiesAvailable: Bool, source: InputLanguages.Source = InputLanguages.current) {
+        interruptEngine(preservingRecentPresentation: canPreserveRecentGlobalPresentation(capabilitiesAvailable: capabilitiesAvailable, source: source))
+        status = reason; scheduleUI()
+        if diagnosticsEnabled {
+            pendingDiagnostics.append("中断 · \(reason)")
+            if pendingDiagnostics.count > 60 { pendingDiagnostics.removeFirst(pendingDiagnostics.count - 60) }
+        }
+    }
+    private func finishRecentPresentation(preserving: Bool) {
+        if preserving { recentSpeedIsFrozen = true }
+        else {
+            recentPresentationValid = false
+            estimatedRhythmHasFreshInterval = false
+            recentSpeedIsFrozen = false
+        }
+    }
+    private func interruptEngine(preservingRecentPresentation: Bool = false) {
         engine.interrupt()
-        recentPresentationValid = false
-        estimatedRhythmHasFreshInterval = false
+        finishRecentPresentation(preserving: preservingRecentPresentation)
         captureCompletion()
     }
     private func captureCompletion() {
@@ -598,7 +639,7 @@ struct HistoryDay: Identifiable {
         // Preserve all quantities, while comparing rates only under the
         // current counting/segmentation rule. Legacy time is never silently
         // blended into a newer numerator definition.
-        let currentRule = Self.rule(maximumGap, suspectedInputFiltering: suspectedInputFilteringEnabled)
+        let currentRule = Self.rule(maximumGap, suspectedInputFiltering: suspectedInputFilteringEnabled, chineseKeyboardCompatibility: chineseKeyboardCompatibilityEnabled)
         let currentEstimatedToday = estimatedToday.filter { $0.rule == currentRule }
         let ratedIntervals = currentEstimatedToday.reduce(0.0) { $0 + $1.intervals }
         let ratedSeconds = currentEstimatedToday.reduce(0.0) { $0 + $1.seconds }
@@ -775,7 +816,7 @@ struct HistoryDay: Identifiable {
                     self.estimatedRhythm.reset(); self.lastEstimatedInputTime = nil; self.estimatedRhythmHasFreshInterval = false
                     self.estimatedRecentKPM = nil
                     self.resetTenMinuteWindow()
-                    self.engine = StatisticsEngine(config: SegmentationConfig(maximumGap: self.maximumGap, ruleID: Self.rule(self.maximumGap, suspectedInputFiltering: self.suspectedInputFilteringEnabled)), timeZone: .current)
+                    self.engine = StatisticsEngine(config: SegmentationConfig(maximumGap: self.maximumGap, ruleID: Self.rule(self.maximumGap, suspectedInputFiltering: self.suspectedInputFilteringEnabled, chineseKeyboardCompatibility: self.chineseKeyboardCompatibilityEnabled)), timeZone: .current)
                 }
                 self.clearing = false; self.refreshSnapshot(); self.loadHistory(days: self.historyDays)
             }
@@ -854,6 +895,7 @@ struct HistoryDay: Identifiable {
         if !(try database.query(since: "0000")).isEmpty { failures.append("FAIL: quit resurrected data during clear") }
     } catch { failures.append("FAIL: clear/quit regression: \(error.localizedDescription)") }
     failures += runCurrentMenuChecks()
+    failures += runFrozenSpeedVisibilityChecks()
     failures += runCombinedEstimateChecks()
     failures += runRollingEstimateChecks()
     failures += runHistoryProjectionChecks()
@@ -930,6 +972,66 @@ struct HistoryDay: Identifiable {
     if model.selectedMenuMetric.primaryRate != nil || model.selectedMenuMetric.kpm != nil {
         failures.append("FAIL: same-language IME mode change retained a previous mode's live rate")
     }
+    model.flushBeforeExit()
+    return failures
+}
+
+/// A real focus/command boundary must end timing without erasing the rate the
+/// user is about to inspect. All source/capability metadata is scripted here.
+@MainActor private func runFrozenSpeedVisibilityChecks() -> [String] {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Keytempo-frozen-check-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let model = AppModel(dataDirectory: directory, monitoringEnabled: false)
+    model.isPaused = false; model.menuDisplay = "speed"
+    model.excludedAppsText = ""; model.updateExclusions()
+    let chinese = InputLanguages.Source(identifier: "test.pinyin", modeIdentifier: "pinyin", name: "Pinyin", languageCode: "zh", inputMethod: true)
+    let english = InputLanguages.Source(identifier: "test.abc", modeIdentifier: "", name: "ABC", languageCode: "en", inputMethod: false)
+    let now = ProcessInfo.processInfo.systemUptime, date = Date()
+    var failures = [String]()
+    func expect(_ value: @autoclosure () -> Bool, _ name: String) { if !value() { failures.append("FAIL: frozen speed \(name)") } }
+    func type(from start: Double, context: UInt64, evidence: Evidence = .probable) {
+        for index in 0..<5 {
+            let offset = start + Double(index) * 0.2
+            model.receiveConfirmedInput(ClassifiedInput(time: now + offset, date: date.addingTimeInterval(offset), context: context,
+                                                       category: .textEntry, evidence: evidence,
+                                                       source: evidence == .probable ? .global : .adapter,
+                                                       operationID: UInt64((offset * 1000).rounded()), language: "zh",
+                                                       committedCharacters: evidence == .confirmed ? 1 : nil))
+        }
+        model.refreshSnapshot()
+    }
+    model.updateInputSource(chinese)
+    type(from: 0, context: 981)
+    expect(abs((model.selectedMenuSpeed.value ?? 0) - 60) < 1e-3 && !model.selectedSpeedIsRecent, "live Chinese WPM starts current")
+    let seconds = model.dailyEstimate.seconds
+    for reason in ["前台应用已变化", "焦点已变化", "快捷命令", "光标导航", "未知输入上下文"] {
+        model.handleMonitoringInterruption(reason, capabilitiesAvailable: true, source: chinese)
+        model.refreshSnapshot()
+        expect(abs((model.selectedMenuSpeed.value ?? 0) - 60) < 1e-3 && abs((model.probable.kpm ?? 0) - 300) < 1e-3 && model.selectedSpeedIsRecent,
+               "same-source inspection and boundary retain clearly recent primary rate")
+        expect(model.dailyEstimate.keys == 5 && abs(model.dailyEstimate.seconds - seconds) < 1e-9, "inspection never adds count or waiting time")
+    }
+    model.menuDisplay = "kpm"
+    expect(abs((model.selectedMenuSpeed.value ?? 0) - 300) < 1e-3 && model.selectedSpeedIsRecent, "optional KPM remains frozen too")
+    model.menuDisplay = "speed"
+    type(from: 10, context: 982)
+    expect(model.dailyEstimate.keys == 10 && abs(model.dailyEstimate.intervals - 8) < 1e-9 && abs(model.dailyEstimate.seconds - 1.6) < 1e-6,
+           "next context is a distinct segment without a timing bridge")
+    expect(abs((model.selectedMenuSpeed.value ?? 0) - 60) < 1e-3 && !model.recentSpeedIsFrozen, "new accepted burst resumes current presentation")
+    model.updateInputSource(english); model.refreshSnapshot()
+    expect(model.selectedMenuSpeed.value == nil && model.estimatedRecentKPM == nil, "actual source change clears primary and KPM immediately")
+    model.updateInputSource(chinese); model.refreshSnapshot()
+    model.handleMonitoringInterruption("焦点已变化", capabilitiesAvailable: true, source: chinese); model.refreshSnapshot()
+    expect(model.selectedMenuSpeed.value == nil, "switching back and focus callbacks never revive an old source's speed")
+    type(from: 20, context: 983)
+    model.handleMonitoringInterruption("系统权限不可用", capabilitiesAvailable: false, source: chinese); model.refreshSnapshot()
+    expect(model.selectedMenuSpeed.value == nil && model.estimatedRecentKPM == nil, "lost capabilities clear the retained rate")
+    type(from: 30, context: 984, evidence: .confirmed)
+    expect(model.selectedMenuSpeed.unit == "CPM" && abs((model.selectedMenuSpeed.value ?? 0) - 300) < 1e-3, "confirmed adapter retains actual CPM")
+    model.handleMonitoringInterruption("前台应用已变化", capabilitiesAvailable: true, source: chinese); model.refreshSnapshot()
+    expect(model.selectedMenuSpeed.value == nil, "confirmed editor rate is not carried into another app")
+    expect(AppModel.rule(3) == "adaptive-v4-no-space-ime-quality-on-max3.0" && AppModel.rule(3, chineseKeyboardCompatibility: true).hasSuffix("-ime-fallback"),
+           "Chinese keyboard fallback has a separate rule without rewriting ordinary history")
     model.flushBeforeExit()
     return failures
 }

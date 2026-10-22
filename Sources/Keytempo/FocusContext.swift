@@ -17,11 +17,20 @@ final class FocusContext {
         let languageCode: String
         var validSince: Double = 0
         var querySummary: String = ""
+        var identityReady = false
+        var identityExpires: Double = 0
+        var keyboardActivityBlocked = false
 
         /// A key already captured within a valid lease remains eligible when
         /// its main-thread batch is delivered later. Expired keys never do.
         func permits(time: Double, version eventVersion: UInt64) -> Bool {
             ready && eventVersion == version && time.isFinite && time >= validSince && time <= expires
+        }
+
+        /// App/source identity authorizes only the opt-in keyboard-activity
+        /// estimate. It never supplies evidence that a text field exists.
+        func permitsIdentity(time: Double, version eventVersion: UInt64) -> Bool {
+            identityReady && !keyboardActivityBlocked && eventVersion == version && time.isFinite && time >= validSince && time <= identityExpires
         }
 
         fileprivate func refreshAction(at now: Double) -> RefreshAction {
@@ -44,8 +53,15 @@ final class FocusContext {
         let source: InputLanguages.Source
     }
 
+    private struct Identity: Equatable {
+        let pid: pid_t
+        let bundleID: String
+        let source: InputLanguages.Source
+    }
+
     var onInvalidate: ((UInt64, String) -> Void)?
     var onResolved: ((Snapshot) -> Void)?
+    var keyboardCompatibilityEnabled = false
     private(set) var version: UInt64 = 1
     private(set) var snapshot = Snapshot(version: 1, bundleID: "", appName: "", role: "", editable: false, ready: false, reason: "正在确认输入上下文", expires: 0, inputMethod: false, languageCode: "und")
     private let queryQueue = DispatchQueue(label: "local.keytempo.focus", qos: .utility)
@@ -63,6 +79,8 @@ final class FocusContext {
     private var focusedElement: AXUIElement?
     private var metadata: Metadata?
     private var renewingExpiredLease = false
+    private var identity: Identity?
+    private var refreshingIdentity = false
 
     func start() {
         guard !active else { return }
@@ -99,6 +117,7 @@ final class FocusContext {
         version &+= 1
         focusedElement = nil
         metadata = nil
+        identity = nil
         renewingExpiredLease = false
         snapshot = Snapshot(version: version, bundleID: "", appName: "", role: "", editable: false, ready: false, reason: reason, expires: 0, inputMethod: false, languageCode: "und", validSince: validSince)
         onInvalidate?(version, reason)
@@ -125,6 +144,7 @@ final class FocusContext {
     /// discards all uncertain events; a matching result may replay their times.
     func prepareForBatch(at now: Double) {
         if snapshot.ready && now > snapshot.expires { beginLeaseRenewal() }
+        if keyboardCompatibilityEnabled && !snapshot.ready { refreshIdentity(at: now) }
     }
 
     private func beginLeaseRenewal() {
@@ -134,11 +154,43 @@ final class FocusContext {
         snapshot = Snapshot(version: version, bundleID: previous.bundleID, appName: previous.appName,
                             role: "", editable: false, ready: false, reason: "上下文已过期，正在重新确认",
                             expires: 0, inputMethod: previous.inputMethod, languageCode: previous.languageCode,
-                            validSince: previous.validSince, querySummary: previous.querySummary)
+                            validSince: previous.validSince, querySummary: previous.querySummary,
+                            identityReady: previous.identityReady, identityExpires: previous.identityExpires,
+                            keyboardActivityBlocked: previous.keyboardActivityBlocked || !previous.editable)
         requestQuery()
     }
 
+    /// A short, event-triggered lease for public front-app/input-source metadata.
+    /// This has no AX text query and no idle timer. It remains usable when the
+    /// app's AX provider cannot expose a composer, but is labelled separately.
+    private func refreshIdentity(at now: Double) {
+        guard active, !refreshingIdentity else { return }
+        guard !snapshot.identityReady || now >= snapshot.identityExpires - 0.2 else { return }
+        refreshingIdentity = true
+        defer { refreshingIdentity = false }
+        InputLanguages.refreshCurrent()
+        guard active else { return }
+        let app = NSWorkspace.shared.frontmostApplication
+        let pid = app?.processIdentifier ?? 0
+        let bundle = app?.bundleIdentifier ?? ""
+        let source = InputLanguages.current
+        let next = Identity(pid: pid, bundleID: bundle, source: source)
+        if let identity, identity != next {
+            invalidate("前台应用或输入源已变化", query: false)
+        }
+        identity = next
+        let previous = snapshot
+        snapshot = Snapshot(version: version, bundleID: bundle, appName: app?.localizedName ?? "未知应用",
+                            role: previous.role, editable: previous.editable, ready: previous.ready,
+                            reason: previous.reason, expires: previous.expires, inputMethod: source.inputMethod,
+                            languageCode: source.languageCode, validSince: validSince, querySummary: previous.querySummary,
+                            identityReady: pid > 0 && !bundle.isEmpty, identityExpires: now + 0.75,
+                            keyboardActivityBlocked: previous.keyboardActivityBlocked || Self.isModeEditor(bundle))
+    }
+
     func requestQuery() {
+        guard active, !refreshingIdentity else { return }
+        refreshIdentity(at: ProcessInfo.processInfo.systemUptime)
         guard active, ProcessInfo.processInfo.systemUptime >= retryAfter else { return }
         // A query's completion requests the latest version when necessary.
         // Keys arriving in the same unknown context must not queue more work.
@@ -156,6 +208,8 @@ final class FocusContext {
         let hasNotifications = observerSupported
         let source = InputLanguages.current
         let requestSince = validSince
+        let requestIdentityReady = snapshot.identityReady
+        let requestIdentityExpires = snapshot.identityExpires
         queryQueue.async { [weak self] in
             let result = trusted && pid > 0 ? AXMetadataQuery.read(pid: pid) : nil
             let role = result?.role ?? ""
@@ -165,11 +219,11 @@ final class FocusContext {
             let editEvidence = result?.editEvidence ?? false
             let textRole = [kAXTextFieldRole, kAXTextAreaRole, kAXComboBoxRole].contains(role)
             let secure = subrole == kAXSecureTextFieldSubrole
-            let uncertainApp = ["com.apple.Terminal", "com.mitchellh.ghostty", "com.googlecode.iterm2", "com.microsoft.VSCode", "com.vscodium", "org.vim.MacVim", "com.jetbrains"].contains { bundle.hasPrefix($0) }
+            let uncertainApp = Self.isModeEditor(bundle)
             let editable = ready && enabled && textRole && editEvidence && !secure && !uncertainApp
             let reason = !trusted ? "未获得辅助功能权限；全局输入不进入有效速度" : !ready ? "AX 查询暂未确认焦点；上下文未知" : secure ? "安全文本区域：不统计" : uncertainApp ? "终端或模式编辑器：未接入用途适配器" : editable ? "可编辑控件元数据；仅估算，不能证明插入文字" : "未确认可编辑文本区域"
             let resolvedMetadata = ready ? Metadata(pid: pid, bundleID: bundle, role: role, subrole: subrole, enabled: enabled, editEvidence: editEvidence, source: source) : nil
-            let value = Snapshot(version: requestVersion, bundleID: bundle, appName: name, role: role, editable: editable, ready: ready, reason: reason, expires: ProcessInfo.processInfo.systemUptime + Self.leaseDuration(editable: editable, notifications: hasNotifications), inputMethod: source.inputMethod, languageCode: source.languageCode, validSince: requestSince, querySummary: result?.summary ?? "AX permission unavailable")
+            let value = Snapshot(version: requestVersion, bundleID: bundle, appName: name, role: role, editable: editable, ready: ready, reason: reason, expires: ProcessInfo.processInfo.systemUptime + Self.leaseDuration(editable: editable, notifications: hasNotifications), inputMethod: source.inputMethod, languageCode: source.languageCode, validSince: requestSince, querySummary: result?.summary ?? "AX permission unavailable", identityReady: requestIdentityReady, identityExpires: requestIdentityExpires, keyboardActivityBlocked: uncertainApp || secure)
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.queryingVersion = nil
@@ -196,6 +250,10 @@ final class FocusContext {
 
     private func apply(_ value: Snapshot, focused: AXUIElement?, metadata nextMetadata: Metadata?, transientFailure: Bool = false) {
         var resolved = value
+        if snapshot.version == value.version && snapshot.identityExpires > value.identityExpires {
+            resolved.identityReady = snapshot.identityReady
+            resolved.identityExpires = snapshot.identityExpires
+        }
         if snapshot.ready || (renewingExpiredLease && value.ready) {
             let sameElement = focusedElement.map { previous in focused.map { CFEqual(previous, $0) } ?? false } ?? false
             if !value.ready || !sameElement || metadata != nextMetadata {
@@ -250,6 +308,10 @@ final class FocusContext {
         editable && notifications ? 30 : 0.75
     }
 
+    private static func isModeEditor(_ bundle: String) -> Bool {
+        ["com.apple.Terminal", "com.mitchellh.ghostty", "com.googlecode.iterm2", "com.microsoft.VSCode", "com.vscodium", "org.vim.MacVim", "com.jetbrains"].contains { bundle.hasPrefix($0) }
+    }
+
     /// In-memory lease/refresh checks; the opaque AX objects are never queried
     /// and no keyboard or system notification is posted by these checks.
     static func exerciseChecks() -> [String] {
@@ -268,6 +330,19 @@ final class FocusContext {
         expect(!lease.permits(time: 99, version: 2), "focus lease rejects an obsolete context version")
         expect(!lease.permits(time: -.infinity, version: 1) && !lease.permits(time: -1, version: 1), "focus lease rejects invalid capture timestamps")
         expect(!sample(ready: false).permits(time: 99, version: 1), "unknown focus cannot classify text")
+        var keyboardIdentity = sample(ready: false)
+        keyboardIdentity.identityReady = true
+        keyboardIdentity.identityExpires = 100
+        keyboardIdentity.validSince = 90
+        expect(keyboardIdentity.permitsIdentity(time: 99, version: 1), "fresh app and source identity can authorize the explicit keyboard estimate")
+        expect(!keyboardIdentity.permits(time: 99, version: 1), "keyboard identity never becomes text-field evidence")
+        expect(!keyboardIdentity.permitsIdentity(time: 100.1, version: 1) && !keyboardIdentity.permitsIdentity(time: 89, version: 1), "keyboard identity lease rejects expired and pre-context events")
+        expect(!keyboardIdentity.permitsIdentity(time: 99, version: 2) && !keyboardIdentity.permitsIdentity(time: .nan, version: 1), "keyboard identity rejects other versions and invalid clocks")
+        keyboardIdentity.keyboardActivityBlocked = true
+        expect(!keyboardIdentity.permitsIdentity(time: 99, version: 1), "mode editors cannot bypass their missing input-purpose adapter")
+        keyboardIdentity.keyboardActivityBlocked = false
+        keyboardIdentity.identityReady = false
+        expect(!keyboardIdentity.permitsIdentity(time: 99, version: 1), "unresolved app identity cannot authorize keyboard estimation")
         var freshLease = sample()
         freshLease.validSince = 99
         expect(!freshLease.permits(time: 98.9, version: 1) && freshLease.permits(time: 99, version: 1), "resolved metadata never applies to events captured before the context began")
@@ -319,6 +394,13 @@ final class FocusContext {
         renewal.prepareForBatch(at: 103.1)
         renewal.invalidate("real focus change", query: false)
         expect(!renewal.renewingExpiredLease && renewal.focusedElement == nil && renewal.metadata == nil, "real notifications clear any pending renewal identity immediately")
+        let noneditableRenewal = FocusContext()
+        var noneditableLease = sample(editable: false)
+        noneditableLease.identityReady = true
+        noneditableLease.identityExpires = 102
+        noneditableRenewal.apply(noneditableLease, focused: focused, metadata: disabled)
+        noneditableRenewal.prepareForBatch(at: 100.1)
+        expect(!noneditableRenewal.snapshot.ready && !noneditableRenewal.snapshot.permitsIdentity(time: 100.1, version: 1), "known noneditable focus cannot bypass exclusion while its lease is being renewed")
         return failures
     }
 
