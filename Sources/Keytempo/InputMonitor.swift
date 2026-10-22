@@ -19,9 +19,19 @@ final class InputMonitor {
     private(set) var overflowCount: UInt64 = 0
     private(set) var unknownEvents: UInt64 = 0
     private(set) var repeatEvents: UInt64 = 0
+    private(set) var suspiciousRepeatEvents: UInt64 = 0
+    private(set) var suspiciousBurstEvents: UInt64 = 0
     private(set) var languageFilteredEvents: UInt64 = 0
     private(set) var callbackP99Microseconds: Double?
     var diagnosticsEnabled = false { didSet { lock.lock(); measureCallback = diagnosticsEnabled; lock.unlock() } }
+    var suspectedInputFilteringEnabled = true {
+        didSet {
+            guard oldValue != suspectedInputFilteringEnabled else { return }
+            flushInputQuality()
+            compositionTracker.reset()
+            onInterruption?("疑似异常输入过滤设置已变化")
+        }
+    }
 
     private struct Raw {
         var time: Double = 0
@@ -52,6 +62,8 @@ final class InputMonitor {
     private var excluded = Set<String>()
     private let context = FocusContext()
     private var compositionTracker = ProbableCompositionTracker()
+    private var inputQuality = InputQualityGuard()
+    private var qualityFlushTask: DispatchWorkItem?
     private var languagePolicyObserver: NSObjectProtocol?
     private lazy var signal: DispatchSourceUserDataAdd = {
         let value = DispatchSource.makeUserDataAddSource(queue: .main)
@@ -67,6 +79,7 @@ final class InputMonitor {
         context.onInvalidate = { [weak self] version, reason in
             guard let self else { return }
             self.lock.lock(); self.callbackVersion = version; self.lock.unlock()
+            self.flushInputQuality()
             self.compositionTracker.reset()
             self.contextSummary = reason
             // Activation/focus notifications also refresh capability state,
@@ -117,6 +130,7 @@ final class InputMonitor {
 
     func stop() {
         running = false
+        flushInputQuality()
         compositionTracker.reset()
         retryTask?.cancel(); retryTask = nil
         lock.lock()
@@ -157,6 +171,10 @@ final class InputMonitor {
         excluded = bundles
         context.invalidate("应用排除设置已变化")
     }
+
+    /// Called before the coordinator changes pause/sleep/rule state, so a short
+    /// valid buffered prefix is accepted under its original counting policy.
+    func flushPendingInput() { flushInputQuality() }
 
     /// Triggered by UI activation, wake, and events; never a perpetual permission poll.
     func checkSystemState() {
@@ -224,7 +242,12 @@ final class InputMonitor {
         if buffered == ring.count { dropped &+= 1 }
         else {
             let slot = (readIndex + buffered) % ring.count
-            ring[slot] = Raw(time: Double(event.timestamp) / 1_000_000_000, key: event.getIntegerValueField(.keyboardEventKeycode), flags: event.flags.rawValue, repeated: event.getIntegerValueField(.keyboardEventAutorepeat) != 0, synthetic: event.getIntegerValueField(.eventSourceStateID) == -1, version: callbackVersion, disabled: type == .tapDisabledByTimeout || type == .tapDisabledByUserInput)
+            // Private sources receive a unique state-table ID, not the -1
+            // initializer constant. Only 0 (combined session) and 1 (HID) are
+            // public state tables. This excludes known private-source input;
+            // generators using either public state remain indistinguishable.
+            let sourceState = Int32(truncatingIfNeeded: event.getIntegerValueField(.eventSourceStateID))
+            ring[slot] = Raw(time: Double(event.timestamp) / 1_000_000_000, key: event.getIntegerValueField(.keyboardEventKeycode), flags: event.flags.rawValue, repeated: event.getIntegerValueField(.keyboardEventAutorepeat) != 0, synthetic: sourceState != 0 && sourceState != 1, version: callbackVersion, disabled: type == .tapDisabledByTimeout || type == .tapDisabledByUserInput)
             buffered += 1
         }
         lock.unlock()
@@ -268,6 +291,7 @@ final class InputMonitor {
         let events = batch.events, lost = batch.lost, durations = batch.durations
         if !durations.isEmpty { callbackP99Microseconds = Double(durations.sorted()[min(durations.count - 1, Int(Double(durations.count) * 0.99))]) / 1000 }
         if lost > 0 {
+            flushInputQuality()
             compositionTracker.reset()
             overflowCount &+= lost
             onInterruption?("事件缓冲区溢出；已丢弃 \(lost) 个事件")
@@ -291,20 +315,23 @@ final class InputMonitor {
         for event in events {
             capturedEvents &+= 1
             if event.disabled { recoverTap(); continue }
-            if snapshot.bundleID == Bundle.main.bundleIdentifier { compositionTracker.reset(); continue }
+            if snapshot.bundleID == Bundle.main.bundleIdentifier { flushInputQuality(); compositionTracker.reset(); continue }
             if excluded.contains(snapshot.bundleID) {
+                flushInputQuality()
                 compositionTracker.reset()
                 onInterruption?("应用已排除")
                 publish("应用已排除")
                 continue
             }
             if event.repeated {
+                flushInputQuality()
                 compositionTracker.reset()
                 repeatEvents &+= 1
                 onInterruption?("自动重复不计入手动敲键节奏")
                 continue
             }
             if snapshot.ready && event.version == snapshot.version && !InputLanguages.policy.allows(languageCode: snapshot.languageCode) {
+                flushInputQuality()
                 compositionTracker.reset()
                 languageFilteredEvents &+= 1
                 onInterruption?("当前输入源语言已排除")
@@ -320,11 +347,59 @@ final class InputMonitor {
                 valid: snapshot.permits(time: event.time, version: event.version) && hasInputPermission && hasAccessibilityPermission)
             // Valid text-context spaces contribute neither keys nor an explicit
             // break. The next accepted operation retains its full actual gap.
-            guard case let .classified(category, evidence) = decision else { continue }
+            guard case let .classified(category, evidence) = decision else {
+                // A space closes a repeated-key hypothesis, while remaining
+                // absent from both the key count and interruption rules.
+                flushInputQuality()
+                continue
+            }
             if category == .unknown { unknownEvents &+= 1 }
-            onInput?(ClassifiedInput(time: event.time, date: date.addingTimeInterval(event.time - now), context: event.version, category: category, evidence: evidence, source: .global, language: snapshot.languageCode))
+            let input = ClassifiedInput(time: event.time, date: date.addingTimeInterval(event.time - now), context: event.version, category: category, evidence: evidence, source: .global, language: snapshot.languageCode)
+            if suspectedInputFilteringEnabled && category == .textEntry && evidence == .probable {
+                deliverInputQuality(inputQuality.observe(input, physicalKey: event.key))
+            } else {
+                // Forward every valid short prefix before the command,
+                // navigation, generated or unknown operation breaks timing.
+                flushInputQuality()
+                onInput?(input)
+            }
         }
         context.prepareForEvent()
+    }
+
+    private func flushInputQuality() {
+        qualityFlushTask?.cancel(); qualityFlushTask = nil
+        let result = inputQuality.flush()
+        for input in result.accepted { onInput?(input) }
+    }
+
+    private func deliverInputQuality(_ result: InputQualityResult) {
+        for input in result.accepted { onInput?(input) }
+        if result.excluded > 0 {
+            compositionTracker.reset()
+            if result.reason == .repeatedKey {
+                suspiciousRepeatEvents &+= UInt64(result.excluded)
+                onInterruption?("疑似连续重复按键已排除")
+            } else {
+                suspiciousBurstEvents &+= UInt64(result.excluded)
+                onInterruption?("疑似多键突发输入已排除")
+            }
+        }
+        guard let deadline = result.deadline else {
+            qualityFlushTask?.cancel(); qualityFlushTask = nil
+            return
+        }
+        // Reuse the existing deadline instead of cancelling/creating one task
+        // per key. A still-active prefix reschedules this single one-shot once.
+        guard qualityFlushTask == nil else { return }
+        let task = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.qualityFlushTask = nil
+            let result = self.inputQuality.flushIfDue(now: ProcessInfo.processInfo.systemUptime)
+            self.deliverInputQuality(result)
+        }
+        qualityFlushTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0, deadline - ProcessInfo.processInfo.systemUptime), execute: task)
     }
 
     fileprivate static func exerciseBufferChecks() -> [String] {
@@ -373,6 +448,47 @@ final class InputMonitor {
         let resumed = monitor.takePending()
         expect(resumed.events.count == 1 && resumed.lost == 0, "resume has no old overflow marker")
         monitor.stop()
+
+        // Verify the live capture copies the OS flags used by the hard
+        // exclusions, without posting these constructed events to the system.
+        monitor.running = true; monitor.accepting = true
+        guard let privateSource = CGEventSource(stateID: .privateState),
+              let privateEvent = CGEvent(keyboardEventSource: privateSource, virtualKey: 0, keyDown: true) else {
+            monitor.stop()
+            return failures + ["construct private-source metadata fixture"]
+        }
+        privateEvent.setIntegerValueField(.keyboardEventAutorepeat, value: 1)
+        let privateState = privateSource.sourceStateID.rawValue
+        expect(privateState != 0 && privateState != 1 && Int32(truncatingIfNeeded: privateEvent.getIntegerValueField(.eventSourceStateID)) == privateState, "private-source fixture preserves its unique state-table ID")
+        monitor.capture(type: .keyDown, event: privateEvent)
+        let marked = monitor.takePending()
+        expect(marked.events.first?.repeated == true && marked.events.first?.synthetic == true, "capture preserves autorepeat and known synthetic metadata")
+        for publicState: CGEventSourceStateID in [.combinedSessionState, .hidSystemState] {
+            guard let source = CGEventSource(stateID: publicState),
+                  let publicEvent = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true) else {
+                failures.append("construct public-source metadata fixture")
+                continue
+            }
+            monitor.capture(type: .keyDown, event: publicEvent)
+            expect(monitor.takePending().events.first?.synthetic == false, "public event source alone does not establish generated input")
+        }
+        monitor.stop()
+
+        // The coordinator can flush valid short prefixes before pause/sleep;
+        // heuristic opt-out also flushes rather than silently losing input.
+        let start = ProcessInfo.processInfo.systemUptime
+        let candidate = ClassifiedInput(time: start, date: Date(), context: 1,
+                                        category: .textEntry, evidence: .probable,
+                                        source: .global, language: "en")
+        let before = forwarded
+        monitor.deliverInputQuality(monitor.inputQuality.observe(candidate, physicalKey: 0))
+        expect(forwarded == before && monitor.qualityFlushTask != nil, "quality prefix uses one bounded one-shot deadline")
+        monitor.flushPendingInput()
+        expect(forwarded == before + 1 && monitor.inputQuality.bufferedCount == 0 && monitor.qualityFlushTask == nil, "pause boundary flush preserves short valid input")
+        monitor.deliverInputQuality(monitor.inputQuality.observe(candidate, physicalKey: 0))
+        monitor.suspectedInputFilteringEnabled = false
+        expect(forwarded == before + 2 && monitor.inputQuality.bufferedCount == 0 && monitor.qualityFlushTask == nil, "disabling suspected filtering flushes its pending prefix")
+        expect(interruptions.contains("疑似异常输入过滤设置已变化"), "heuristic policy change interrupts timing")
         return failures
     }
 
@@ -382,6 +498,7 @@ final class InputMonitor {
     }
 
     private func recoverTap() {
+        flushInputQuality()
         compositionTracker.reset()
         onInterruption?("系统暂停了事件监听")
         publish("事件监听中断")

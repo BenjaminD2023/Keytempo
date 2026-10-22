@@ -103,6 +103,13 @@ struct HistoryDay: Identifiable {
     @Published var probable = MetricDisplay()
     @Published private(set) var dailyEstimate = MetricDisplay()
     @Published private(set) var estimatedRecentKPM: Double?
+    @Published private(set) var tenMinuteWPM: Double?
+    @Published private(set) var tenMinuteKPM: Double?
+    @Published private(set) var tenMinuteWindowComplete = true
+    @Published private(set) var tenMinuteObservedSeconds = 0.0
+    @Published private(set) var todayAverageWPM: Double?
+    @Published private(set) var todayAverageIsPartial = false
+    @Published private(set) var todayAverageCoveredKeys = 0
     @Published private(set) var completedPrimaryMetric: CompletedMenuMetric?
     @Published private(set) var completedKPMMetric: CompletedMenuMetric?
     @Published private(set) var completionPending = false
@@ -141,6 +148,9 @@ struct HistoryDay: Identifiable {
     @Published var maximumGap = UserDefaults.standard.object(forKey: "maximumGap") as? Double ?? 3
     @Published var menuDisplay = UserDefaults.standard.string(forKey: "menuDisplay") ?? "speed"
     @Published var diagnosticsEnabled = false
+    @Published var suspectedInputFilteringEnabled = UserDefaults.standard.object(forKey: "suspectedInputFilteringEnabled") as? Bool ?? true
+    @Published private(set) var suspiciousRepeatEvents: UInt64 = 0
+    @Published private(set) var suspiciousBurstEvents: UInt64 = 0
     @Published var launchAtLogin = SMAppService.mainApp.status == .enabled
     @Published var storageError: String?
     @Published var interfaceLanguage = UserDefaults.standard.string(forKey: "interfaceLanguage") == "en" ? "en" : "zh-Hans"
@@ -170,6 +180,8 @@ struct HistoryDay: Identifiable {
     private var activeReceipt: WriteReceipt?
     private let diskQueue = DispatchQueue(label: "local.keytempo.persistence", qos: .utility)
     private var uiTimer: Timer?
+    private var windowExpiryWork: DispatchWorkItem?
+    private var windowExpiryDeadline: Double?
     private var saveWork: DispatchWorkItem?
     private var retryCount = 0
     private var generation: UInt64 = 0
@@ -182,6 +194,8 @@ struct HistoryDay: Identifiable {
     private var presentedInputSource: InputLanguages.Source?
     private var recentPresentationValid = false
     private var estimatedRhythm = RecentIntervalRhythm()
+    private var tenMinuteWindow = RollingTypingWindow()
+    private var tenMinuteObservationStart = ProcessInfo.processInfo.systemUptime
     private var estimatedRhythmHasFreshInterval = false
     private var lastEstimatedInputTime: Double?
     private var historySelection: HistorySelection?
@@ -190,7 +204,9 @@ struct HistoryDay: Identifiable {
     private var activeHistoryRead: HistoryReadRequest?
     private var pendingHistoryRead: HistoryReadRequest?
 
-    static func rule(_ maximum: Double) -> String { "adaptive-v3-no-space-ime-estimate-max" + String(format: "%.1f", maximum) }
+    static func rule(_ maximum: Double, suspectedInputFiltering: Bool = true) -> String {
+        "adaptive-v4-no-space-ime-quality-" + (suspectedInputFiltering ? "on" : "off") + "-max" + String(format: "%.1f", maximum)
+    }
     static func day(_ date: Date = Date()) -> String {
         let c = Calendar.current.dateComponents([.year, .month, .day], from: date)
         return String(format: "%04d-%02d-%02d", c.year!, c.month!, c.day!)
@@ -198,7 +214,8 @@ struct HistoryDay: Identifiable {
     init(dataDirectory: URL? = nil, monitoringEnabled: Bool = true) {
         self.monitoringEnabled = monitoringEnabled
         let gap = UserDefaults.standard.object(forKey: "maximumGap") as? Double ?? 3
-        engine = StatisticsEngine(config: SegmentationConfig(maximumGap: gap, ruleID: Self.rule(gap)), timeZone: .current)
+        let filterSuspected = UserDefaults.standard.object(forKey: "suspectedInputFilteringEnabled") as? Bool ?? true
+        engine = StatisticsEngine(config: SegmentationConfig(maximumGap: gap, ruleID: Self.rule(gap, suspectedInputFiltering: filterSuspected)), timeZone: .current)
         // Keep the existing on-disk identity so renaming the app preserves history.
         let directory = dataDirectory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("TypingSpeed", isDirectory: true)
         databaseURL = directory.appendingPathComponent("statistics.sqlite")
@@ -221,12 +238,14 @@ struct HistoryDay: Identifiable {
             guard let self else { return }
             if !self.isPaused { self.status = value }; self.scheduleUI()
         }
+        monitor.suspectedInputFilteringEnabled = filterSuspected
         updateExclusions()
         refreshInputLanguages()
         for name in [InputLanguages.sourceChanged, InputLanguages.policyChanged] {
             observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated {
                     guard let self else { return }
+                    self.monitor.flushPendingInput()
                     self.interruptEngine()
                     self.refreshInputLanguages()
                     self.refreshSnapshot()
@@ -236,28 +255,33 @@ struct HistoryDay: Identifiable {
         let center = NSWorkspace.shared.notificationCenter
         observers.append(center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self else { return }; self.sleeping = true; self.interruptEngine(); self.monitor.stop(); self.flush(); self.status = "系统睡眠，统计已中断"; self.stopUI()
+                guard let self else { return }; self.monitor.flushPendingInput(); self.sleeping = true; self.interruptEngine(); self.monitor.stop(); self.flush(); self.status = "系统睡眠，统计已中断"; self.stopUI(); self.resetTenMinuteWindow()
             }
         })
         observers.append(center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self else { return }; self.sleeping = false; self.interruptEngine(); if !self.isPaused { self.monitor.start() }; self.refreshSnapshot()
+                guard let self else { return }; self.sleeping = false; self.interruptEngine(); self.resetTenMinuteWindow(); if !self.isPaused { self.monitor.start() }; self.refreshSnapshot()
             }
         })
         observers.append(NotificationCenter.default.addObserver(forName: NSNotification.Name.NSSystemTimeZoneDidChange, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.engine.updateTimeZone(.current); self?.refreshSnapshot() }
+            MainActor.assumeIsolated { self?.monitor.flushPendingInput(); self?.engine.updateTimeZone(.current); self?.refreshSnapshot() }
         })
         if !isPaused && monitoringEnabled { monitor.start() } else { status = "已暂停" }
         refreshSnapshot()
     }
     func receiveConfirmedInput(_ input: ClassifiedInput) {
         guard !ownedAdapterExcluded else { return }
+        monitor.flushPendingInput()
         receive(input)
     }
     func interruptConfirmed() { interruptEngine(); scheduleUI() }
     private func receive(_ input: ClassifiedInput) {
         guard !isPaused, !sleeping, !clearing else { return }
-        let deltas = engine.record(input)
+        // Backwards event clocks cannot make an earlier session look recent.
+        if let last = lastEstimatedInputTime, input.time < last { resetTenMinuteWindow() }
+        let result = engine.recordWithIntervals(input)
+        let deltas = result.deltas
+        tenMinuteWindow.record(result.acceptedIntervals, at: input.time)
         captureCompletion()
         if input.category.isEffective && input.evidence != .unknown {
             // A deduplicated or invalid event cannot revive the old lane after
@@ -305,7 +329,7 @@ struct HistoryDay: Identifiable {
     }
     func receiveCommit(english: Int, chinese: Int, language: String = "und", unratedCharacters: Int = 0) {
         guard !isPaused, !sleeping, !clearing, !ownedAdapterExcluded else { return }
-        var row = StoredAggregate(day: Self.day(), timezone: TimeZone.current.identifier, rule: Self.rule(maximumGap), evidence: "confirmed", language: language)
+        var row = StoredAggregate(day: Self.day(), timezone: TimeZone.current.identifier, rule: Self.rule(maximumGap, suspectedInputFiltering: suspectedInputFilteringEnabled), evidence: "confirmed", language: language)
         row.english = english; row.chinese = chinese; row.characters = max(0, unratedCharacters)
         accumulate(row); scheduleUI()
     }
@@ -365,7 +389,8 @@ struct HistoryDay: Identifiable {
         retryCount = 0; flush(); refreshSnapshot()
     }
     func flushBeforeExit() {
-        stopUI(); saveWork?.cancel(); saveWork = nil; monitor.stop(); interruptEngine()
+        stopUI(); windowExpiryWork?.cancel(); windowExpiryWork = nil; windowExpiryDeadline = nil
+        saveWork?.cancel(); saveWork = nil; monitor.stop(); interruptEngine()
         if clearing { diskQueue.sync {}; return }
         // Serial ordering guarantees a previous in-flight transaction completes first.
         let rows = Array(pending.values), flightRows = Array(inFlight.values), receipt = activeReceipt, database = store
@@ -378,7 +403,9 @@ struct HistoryDay: Identifiable {
         pending.removeAll()
     }
     func togglePause() {
+        monitor.flushPendingInput()
         isPaused.toggle(); UserDefaults.standard.set(isPaused, forKey: "paused"); interruptEngine()
+        resetTenMinuteWindow()
         if isPaused { estimatedRhythm.reset(); lastEstimatedInputTime = nil }
         if isPaused { monitor.stop(); status = "已暂停"; flush() } else if !sleeping { monitor.start(); status = "正在确认上下文" }
         refreshSnapshot()
@@ -405,6 +432,7 @@ struct HistoryDay: Identifiable {
         saveLanguageSelection()
     }
     private func saveLanguageSelection() {
+        monitor.flushPendingInput()
         if monitorAllLanguages { UserDefaults.standard.removeObject(forKey: "monitoredLanguages") }
         else { UserDefaults.standard.set(monitoredLanguages, forKey: "monitoredLanguages") }
         InputLanguages.reloadPolicy()
@@ -421,6 +449,7 @@ struct HistoryDay: Identifiable {
     /// can exercise a language round trip without changing macOS or user prefs.
     fileprivate func updateInputSource(_ source: InputLanguages.Source) {
         if presentedInputSource != source {
+            monitor.flushPendingInput()
             presentedInputSource = source
             interruptEngine()
         }
@@ -441,6 +470,7 @@ struct HistoryDay: Identifiable {
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
     }
     func refreshPermissions() {
+        monitor.flushPendingInput()
         interruptEngine(); monitor.refreshPermissions()
         if !isPaused { monitor.stop(); monitor.start() }
         refreshSnapshot()
@@ -451,11 +481,16 @@ struct HistoryDay: Identifiable {
         monitor.updateExcludedApps(Set(values))
     }
     func applySettings() {
+        monitor.flushPendingInput()
         maximumGap = max(1, min(6, maximumGap))
-        engine.updateConfig(SegmentationConfig(maximumGap: maximumGap, ruleID: Self.rule(maximumGap)))
+        let countingRule = Self.rule(maximumGap, suspectedInputFiltering: suspectedInputFilteringEnabled)
+        if engine.config.ruleID != countingRule { resetTenMinuteWindow() }
+        engine.updateConfig(SegmentationConfig(maximumGap: maximumGap, ruleID: countingRule))
+        monitor.suspectedInputFilteringEnabled = suspectedInputFilteringEnabled
         updateExclusions()
         monitor.diagnosticsEnabled = diagnosticsEnabled
         UserDefaults.standard.set(excludedAppsText, forKey: "excludedApps"); UserDefaults.standard.set(maximumGap, forKey: "maximumGap"); UserDefaults.standard.set(menuDisplay, forKey: "menuDisplay")
+        UserDefaults.standard.set(suspectedInputFilteringEnabled, forKey: "suspectedInputFilteringEnabled")
         if !diagnosticsEnabled { diagnostics.removeAll(); pendingDiagnostics.removeAll() }
         flush(); refreshSnapshot()
     }
@@ -488,8 +523,34 @@ struct HistoryDay: Identifiable {
         timer.tolerance = 0.2; RunLoop.main.add(timer, forMode: .common); uiTimer = timer
     }
     private func stopUI() { uiTimer?.invalidate(); uiTimer = nil }
+    private func resetTenMinuteWindow() {
+        tenMinuteWindow.reset()
+        tenMinuteObservationStart = ProcessInfo.processInfo.systemUptime
+        windowExpiryWork?.cancel(); windowExpiryWork = nil; windowExpiryDeadline = nil
+        tenMinuteWPM = nil; tenMinuteKPM = nil; tenMinuteWindowComplete = true; tenMinuteObservedSeconds = 0
+    }
+    private func refreshTenMinuteWindow(at now: Double) {
+        let window = tenMinuteWindow.snapshot(at: now)
+        let observed = isPaused || sleeping ? 0 : min(600, max(0, now - tenMinuteObservationStart))
+        if tenMinuteObservedSeconds != observed { tenMinuteObservedSeconds = observed }
+        if tenMinuteKPM != window.kpm { tenMinuteKPM = window.kpm }
+        if tenMinuteWPM != window.estimatedWPM { tenMinuteWPM = window.estimatedWPM }
+        if tenMinuteWindowComplete != window.isComplete { tenMinuteWindowComplete = window.isComplete }
+        let deadline = window.nextExpiry
+        guard deadline != windowExpiryDeadline else { return }
+        windowExpiryWork?.cancel(); windowExpiryWork = nil; windowExpiryDeadline = deadline
+        guard let deadline, !sleeping else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.windowExpiryWork = nil; self.windowExpiryDeadline = nil
+            self.refreshSnapshot()
+        }
+        windowExpiryWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0.01, deadline - now), execute: work)
+    }
     func refreshSnapshot() {
         let now = ProcessInfo.processInfo.systemUptime
+        refreshTenMinuteWindow(at: now)
         let todayKey = Self.day()
         engine.advance(to: now)
         captureCompletion()
@@ -506,6 +567,8 @@ struct HistoryDay: Identifiable {
         if contextDescription != monitor.contextSummary { contextDescription = monitor.contextSummary }
         if hasInputPermission != monitor.hasInputPermission { hasInputPermission = monitor.hasInputPermission }
         if hasAccessibilityPermission != monitor.hasAccessibilityPermission { hasAccessibilityPermission = monitor.hasAccessibilityPermission }
+        if suspiciousRepeatEvents != monitor.suspiciousRepeatEvents { suspiciousRepeatEvents = monitor.suspiciousRepeatEvents }
+        if suspiciousBurstEvents != monitor.suspiciousBurstEvents { suspiciousBurstEvents = monitor.suspiciousBurstEvents }
         func display(_ source: MetricSnapshot, evidence: String) -> MetricDisplay {
             let language = currentInputLanguageCode
             let today = cached.values.filter { $0.day == todayKey && $0.evidence == evidence && $0.language == language }
@@ -532,7 +595,20 @@ struct HistoryDay: Identifiable {
         let estimatedToday = today.filter { $0.evidence == "probable" }
         let totalIntervals = estimatedToday.reduce(0.0) { $0 + $1.intervals }
         let totalSeconds = estimatedToday.reduce(0.0) { $0 + $1.seconds }
-        let mixedEstimateRules = Set(estimatedToday.map(\.rule)).count > 1
+        // Preserve all quantities, while comparing rates only under the
+        // current counting/segmentation rule. Legacy time is never silently
+        // blended into a newer numerator definition.
+        let currentRule = Self.rule(maximumGap, suspectedInputFiltering: suspectedInputFilteringEnabled)
+        let currentEstimatedToday = estimatedToday.filter { $0.rule == currentRule }
+        let ratedIntervals = currentEstimatedToday.reduce(0.0) { $0 + $1.intervals }
+        let ratedSeconds = currentEstimatedToday.reduce(0.0) { $0 + $1.seconds }
+        let todayKPM = ratedIntervals >= 4 && ratedSeconds >= 0.5 ? 60 * ratedIntervals / ratedSeconds : nil
+        let averageWPM = TypingRate.estimatedWPM(fromKPM: todayKPM)
+        let partial = estimatedToday.contains { $0.rule != currentRule }
+        let coveredKeys = currentEstimatedToday.reduce(0) { $0 + $1.keys }
+        if todayAverageWPM != averageWPM { todayAverageWPM = averageWPM }
+        if todayAverageIsPartial != partial { todayAverageIsPartial = partial }
+        if todayAverageCoveredKeys != coveredKeys { todayAverageCoveredKeys = coveredKeys }
         let recentEstimate = estimatedRhythmHasFreshInterval ? estimatedRhythm.kpm : nil
         if estimatedRecentKPM != recentEstimate { estimatedRecentKPM = recentEstimate }
         let combined = MetricDisplay(language: "und", keys: estimatedToday.reduce(0) { $0 + $1.keys },
@@ -540,7 +616,7 @@ struct HistoryDay: Identifiable {
                                      composition: estimatedToday.reduce(0) { $0 + $1.composition },
                                      intervals: totalIntervals, seconds: totalSeconds,
                                      kpm: recentEstimate,
-                                     todayKPM: !mixedEstimateRules && totalIntervals >= 4 && totalSeconds >= 0.5 ? 60 * totalIntervals / totalSeconds : nil)
+                                     todayKPM: todayKPM)
         if dailyEstimate != combined { dailyEstimate = combined }
         let english = today.reduce(0) { $0 + $1.english }, chinese = today.reduce(0) { $0 + $1.chinese }
         if english != commitsEnglish { commitsEnglish = english }; if chinese != commitsChinese { commitsChinese = chinese }
@@ -682,6 +758,7 @@ struct HistoryDay: Identifiable {
     /// Caller presents the destructive confirmation in SettingsView.
     func clearHistory() {
         guard let store else { return }
+        monitor.flushPendingInput()
         clearing = true; saveWork?.cancel(); saveWork = nil; interruptEngine()
         invalidateHistoryReads(clearRows: false)
         diskQueue.async {
@@ -697,7 +774,8 @@ struct HistoryDay: Identifiable {
                     self.consumedCompletionRevision = 0; self.completionPending = false
                     self.estimatedRhythm.reset(); self.lastEstimatedInputTime = nil; self.estimatedRhythmHasFreshInterval = false
                     self.estimatedRecentKPM = nil
-                    self.engine = StatisticsEngine(config: SegmentationConfig(maximumGap: self.maximumGap, ruleID: Self.rule(self.maximumGap)), timeZone: .current)
+                    self.resetTenMinuteWindow()
+                    self.engine = StatisticsEngine(config: SegmentationConfig(maximumGap: self.maximumGap, ruleID: Self.rule(self.maximumGap, suspectedInputFiltering: self.suspectedInputFilteringEnabled)), timeZone: .current)
                 }
                 self.clearing = false; self.refreshSnapshot(); self.loadHistory(days: self.historyDays)
             }
@@ -777,6 +855,7 @@ struct HistoryDay: Identifiable {
     } catch { failures.append("FAIL: clear/quit regression: \(error.localizedDescription)") }
     failures += runCurrentMenuChecks()
     failures += runCombinedEstimateChecks()
+    failures += runRollingEstimateChecks()
     failures += runHistoryProjectionChecks()
     return failures
 }
@@ -922,6 +1001,60 @@ struct HistoryDay: Identifiable {
     type([90], language: "en")
     if model.estimatedRecentKPM != nil { failures.append("FAIL: a backwards event timestamp retained an old rhythm") }
     model.flushBeforeExit()
+    return failures
+}
+
+/// Current-rule daily averages survive legacy rows, while recent averages are
+/// genuinely session-only and exclude the confirmed validation adapter.
+@MainActor private func runRollingEstimateChecks() -> [String] {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Keytempo-window-check-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    var failures = [String]()
+    do {
+        let store = try AggregateStore(url: directory.appendingPathComponent("statistics.sqlite"))
+        var legacy = StoredAggregate(day: AppModel.day(), timezone: TimeZone.current.identifier,
+                                     rule: "legacy-counting-rule", evidence: "probable", language: "en")
+        legacy.keys = 1_000; legacy.intervals = 999; legacy.seconds = 1_000
+        try store.save([legacy])
+    } catch { return ["FAIL: rolling estimate setup: \(error.localizedDescription)"] }
+    let model = AppModel(dataDirectory: directory, monitoringEnabled: false)
+    model.isPaused = false; model.excludedAppsText = ""; model.updateExclusions()
+    if model.tenMinuteWPM != nil || model.todayAverageWPM != nil || !model.todayAverageIsPartial {
+        failures.append("FAIL: session window or current-rule daily rate fabricated from legacy history")
+    }
+    let now = ProcessInfo.processInfo.systemUptime - 30
+    let date = Calendar.current.date(bySettingHour: 12, minute: 0, second: 0, of: Date())!
+    for (times, language) in [([0.0, 0.1, 0.2, 0.3, 0.4], "en"), ([10.0, 10.5, 11, 11.5, 12], "zh")] {
+        for time in times {
+            model.receiveConfirmedInput(ClassifiedInput(time: now + time, date: date.addingTimeInterval(time),
+                                                        context: 782, category: .textEntry, evidence: .probable,
+                                                        source: .global, language: language))
+        }
+    }
+    model.refreshSnapshot()
+    if abs((model.tenMinuteKPM ?? 0) - 200) > 1e-3 || abs((model.tenMinuteWPM ?? 0) - 40) > 1e-3 {
+        failures.append("FAIL: coordinator ten-minute estimate lost interval weighting or language coverage")
+    }
+    if model.dailyEstimate.keys != 1_010 || abs(model.dailyEstimate.seconds - 1_002.4) > 1e-3 ||
+        abs((model.todayAverageWPM ?? 0) - 40) > 1e-3 || abs((model.dailyEstimate.todayKPM ?? 0) - 200) > 1e-3 ||
+        !model.todayAverageIsPartial || model.todayAverageCoveredKeys != 10 {
+        failures.append("FAIL: legacy quantities were lost or incompatible rules contaminated today's average")
+    }
+    for offset in [20.0, 20.2, 20.4, 20.6, 20.8] {
+        model.receiveConfirmedInput(ClassifiedInput(time: now + offset, date: date.addingTimeInterval(offset),
+                                                    context: 783, category: .textEntry, evidence: .confirmed,
+                                                    source: .adapter, language: "zh", committedCharacters: 1))
+    }
+    model.refreshSnapshot()
+    if abs((model.tenMinuteWPM ?? 0) - 40) > 1e-3 || abs((model.todayAverageWPM ?? 0) - 40) > 1e-3 {
+        failures.append("FAIL: confirmed validation adapter contaminated estimated averages")
+    }
+    model.flushBeforeExit()
+    let restored = AppModel(dataDirectory: directory, monitoringEnabled: false)
+    if restored.tenMinuteWPM != nil || restored.tenMinuteKPM != nil || abs((restored.todayAverageWPM ?? 0) - 40) > 1e-3 {
+        failures.append("FAIL: restart reconstructed a rolling window from daily aggregates or lost today's average")
+    }
+    restored.flushBeforeExit()
     return failures
 }
 

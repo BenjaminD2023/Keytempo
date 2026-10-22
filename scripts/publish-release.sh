@@ -114,9 +114,9 @@ notes_path="$PWD/dist/release-notes.md"
         print -- "Developer ID signed and notarized; the stapled ticket was validated during publication."
     fi
     print -- ""
-    print -- "Updates use Sparkle Ed25519 archive and feed signatures. Signing private keys remain in the maintainer's local Keychain. Migrating from the former ad-hoc release requires one new permission grant; stable signing avoids changing the app identity on each build, but actual TCC retention still needs user verification."
+    print -- "Updates use Sparkle Ed25519 archive and feed signatures. Signing private keys remain in the maintainer's local Keychain. The real maintainer-Mac upgrade from build 9 to 10 retained Input Monitoring and Accessibility grants; this is a bounded local result, not a guarantee for every Mac. Migration from the former ad-hoc identity still requires one new grant."
     print -- ""
-    print -- "Global typing statistics are estimates. Global Chinese CPM is unavailable without a commit adapter. Verify downloads against SHA256SUMS."
+    print -- "Global typing statistics use estimated WPM (accepted-operation KPM / 5) for all languages. Actual CPM requires a confirmed commit adapter. Suspected-input heuristics cannot recognize arbitrary random-text intent or every macro. Verify downloads against SHA256SUMS."
     print -- ""
     cat CHANGELOG.md
 } > "$notes_path"

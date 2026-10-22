@@ -49,6 +49,13 @@ class UpdateFeedTests(unittest.TestCase):
         self.assertEqual(len(items), 20)
         self.assertEqual([int(item.findtext(feed.tag(feed.SPARKLE, "version"))) for item in items], list(range(24, 4, -1)))
 
+    def test_zero_major_renumbering_uses_increasing_build(self):
+        self.previous.write_bytes(self.generate(version="1.2.1", build="10"))
+        items = ET.fromstring(self.generate(version="0.3.0", build="11")).findall("channel/item")
+        self.assertEqual([item.findtext(feed.tag(feed.SPARKLE, "shortVersionString")) for item in items], ["0.3.0", "1.2.1"])
+        self.assertEqual([item.findtext(feed.tag(feed.SPARKLE, "version")) for item in items], ["11", "10"])
+        self.assertIn("/v0.3.0/Keytempo-0.3.0-", items[0].find("enclosure").get("url"))
+
     def test_key_or_signing_team_cannot_change_silently(self):
         self.previous.write_bytes(self.generate())
         for changes in [dict(public_key=base64.b64encode(bytes([1]) * 32).decode()), dict(team="DIFFERENT1"), dict(signing_channel="developer-id"), dict(requirement_hash="b" * 64)]:

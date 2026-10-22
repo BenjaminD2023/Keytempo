@@ -9,6 +9,29 @@ public enum Evidence: String, Codable, Sendable, CaseIterable { case confirmed, 
 public enum InputSource: String, Codable, Sendable { case global, adapter }
 public enum TypingPhase: String, Codable, Sendable { case idle, candidate, typing }
 
+/// Transient timing metadata for one interval accepted by the segmentation
+/// model. Adaptive backfill retains the original event times. This type is
+/// intentionally not Codable and never belongs in the aggregate store.
+public struct AcceptedTypingInterval: Sendable, Equatable {
+    public let startTime: Double
+    public let endTime: Double
+    public let evidence: Evidence
+    public let language: String
+    public let ruleID: String
+    public init(startTime: Double, endTime: Double, evidence: Evidence,
+                language: String, ruleID: String) {
+        self.startTime = startTime; self.endTime = endTime
+        self.evidence = evidence; self.language = language; self.ruleID = ruleID
+    }
+}
+
+/// One bounded processing result: at most three accepted intervals can be
+/// produced by an event, including the slower-rhythm candidate backfill.
+public struct StatisticsRecordResult: Sendable {
+    public let deltas: [DailyDelta]
+    public let acceptedIntervals: [AcceptedTypingInterval]
+}
+
 /// Contains metadata only. `operationID` must identify the same physical operation across sources.
 public struct ClassifiedInput: Sendable {
     public var time: Double
@@ -219,6 +242,7 @@ private struct Lane: Sendable {
     var segmentEnd: ClassifiedInput?
     var segmentFinalized = false
     var completed: CompletedTypingSegment?
+    var acceptedIntervals: [AcceptedTypingInterval] = []
 
     mutating func interrupt(config: SegmentationConfig) {
         finishSegment(config: config)
@@ -247,6 +271,11 @@ private struct Lane: Sendable {
     mutating func accept(_ interval: IntervalSummary, config: SegmentationConfig,
                          timeZone: TimeZone) -> [DailyDelta] {
         let dt = interval.seconds
+        acceptedIntervals.append(AcceptedTypingInterval(startTime: interval.start.time,
+                                                       endTime: interval.end.time,
+                                                       evidence: interval.end.evidence,
+                                                       language: interval.end.language,
+                                                       ruleID: config.ruleID))
         segmentEnd = interval.end
         segmentFinalized = false
         totals.intervals += 1; totals.seconds += dt
@@ -265,6 +294,7 @@ private struct Lane: Sendable {
 
     mutating func record(_ event: ClassifiedInput, config: SegmentationConfig,
                          timeZone: TimeZone) -> [DailyDelta] {
+        acceptedIntervals.removeAll(keepingCapacity: true)
         totals.recentLanguage = event.language
         totals.keys += 1
         if event.category == .editing { totals.edits += 1 }
@@ -399,13 +429,19 @@ public struct StatisticsEngine: Sendable {
     }
 
     public mutating func record(_ input: ClassifiedInput) -> [DailyDelta] {
+        recordWithIntervals(input).deltas
+    }
+
+    /// The caller consumes interval metadata immediately; no per-event history
+    /// is retained beyond the engine's bounded candidate and result buffers.
+    public mutating func recordWithIntervals(_ input: ClassifiedInput) -> StatisticsRecordResult {
         if let id = input.operationID {
-            if idSet.contains(id) { duplicateCount += 1; return [] }
+            if idSet.contains(id) { duplicateCount += 1; return StatisticsRecordResult(deltas: [], acceptedIntervals: []) }
             if recentIDs.count == 256 { idSet.remove(recentIDs.removeFirst()) }
             recentIDs.append(id); idSet.insert(id)
         }
         guard input.time.isFinite, input.date.timeIntervalSince1970.isFinite,
-              input.category.isEffective, input.evidence != .unknown else { interrupt(); return [] }
+              input.category.isEffective, input.evidence != .unknown else { interrupt(); return StatisticsRecordResult(deltas: [], acceptedIntervals: []) }
         if activeContext != input.context || activeEvidence != input.evidence || activeSource != input.source || activeLanguage != input.language {
             interrupt()
             // Context-specific samples prevent a previous editor/IME rhythm from classifying a new one.
@@ -424,7 +460,8 @@ public struct StatisticsEngine: Sendable {
         if input.evidence == .confirmed { deltas = confirmed.record(coveredInput, config: config, timeZone: timeZone) }
         else { deltas = probable.record(coveredInput, config: config, timeZone: timeZone) }
         collectCompletions()
-        return deltas
+        return StatisticsRecordResult(deltas: deltas,
+                                      acceptedIntervals: input.evidence == .confirmed ? confirmed.acceptedIntervals : probable.acceptedIntervals)
     }
 
     public mutating func interrupt() {

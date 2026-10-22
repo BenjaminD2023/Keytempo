@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing release tag, matching Info.plist (for example v1.2.0)
+        description: Existing release tag, matching Info.plist (for example v0.3.0)
         required: true
         type: string
 

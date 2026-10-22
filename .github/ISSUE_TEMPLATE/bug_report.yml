@@ -8,7 +8,7 @@ body:
     id: version
     attributes:
       label: Keytempo version
-      placeholder: "1.1.1 (build 8)"
+      placeholder: "0.3.0 (build 11)"
     validations:
       required: true
   - type: input

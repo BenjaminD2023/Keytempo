@@ -2,7 +2,7 @@
 
 A native macOS menu bar app for understanding your everyday typing rhythm. Built with Swift, AppKit and SwiftUI; statistics stay on your Mac.
 
-[简体中文](README.zh-CN.md) · [Releases](https://github.com/BenjaminD2023/Keytempo/releases) · [License](LICENSE) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
+[简体中文](README.zh-CN.md) · [Releases](https://github.com/BenjaminD2023/Keytempo/releases) · [Changelog](CHANGELOG.md) · [License](LICENSE) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
 
 ## What it measures
 
@@ -10,7 +10,7 @@ Keytempo separates **context-based estimates** from **confirmed input**. Global 
 
 | Metric | Definition | Availability |
 |---|---|---|
-| Estimated WPM | Current-source input-process KPM divided by five; includes composition and editing, not actual words or Chinese characters | All global input-source languages, including Chinese; always marked as an estimate |
+| Estimated WPM | Accepted input-process KPM divided by five; includes composition and editing, not actual words or Chinese characters | All global input-source languages, including Chinese; always marked as an estimate |
 | CPM | Actually committed grapheme clusters divided by covered input-process time | Character-based languages, through the confirmed editor only |
 | KPM | Accepted operation intervals per minute | Separate menu option and history columns; global values remain estimates |
 
@@ -18,15 +18,17 @@ The primary menu bar rate shows the **current input segment**, updating about on
 
 At least four accepted intervals and 0.5 seconds are needed to display a rate. A segment's first operation still counts toward totals. During a natural idle pause, the measured rate freezes and is marked as recent/stopped; waiting does not add typing time or reduce it.
 
-The daily overview and menu popup show one **estimated keystroke counter** for everyday input in other apps, combining all recorded languages. Daily typing duration and weighted KPM are combined too; current and daily estimated WPM stay specific to the current input-source language. Shortcut and context filtering remain active, and spaces are excluded from the global counter and KPM. Large counts use at most three numeric digits with K/M/B suffixes (for example, `1.49K`); hover to see the full integer. History includes combined count/KPM summaries and per-language estimated WPM. Its chart plots only global estimated WPM for the selected language; actual confirmed CPM stays in the separate integrated-path table and is never overlaid on the WPM chart. Confirmed-editor details remain on the Validation tab and in raw CSV exports.
+The menu popup emphasizes the **past ten minutes' average estimated WPM**, with current speed below it and today's statistics retained. The ten-minute value combines accepted intervals across all recorded global input languages and divides their total interval count by their actual typing duration, then by five. It is not throughput over ten wall-clock minutes. The rolling window is session-only; the UI reports shorter observed coverage after launch, resume or reset. Idle waiting adds no typing time, although an old interval can leave the rolling window after ten minutes. A bounded-buffer coverage failure suppresses the rate rather than presenting a partial sample as complete.
+
+The daily overview and menu popup show one **estimated keystroke counter** for everyday input in other apps, combining all recorded languages. Today's average estimated WPM and secondary weighted KPM also combine languages, using the current counting rule. When older rules coexist, all quantities remain visible and the average's partial coverage is explicit. Current segment speed still follows the current input source. Shortcut and context filtering remain active, and spaces are excluded from the global counter and KPM. Large counts use at most three numeric digits with K/M/B suffixes (for example, `1.49K`); hover to see the full integer. History includes combined count/KPM summaries and per-language estimated WPM. Its chart plots only global estimated WPM for the selected language; actual confirmed CPM stays in the separate integrated-path table and is never overlaid on the WPM chart. Confirmed-editor details remain on the Validation tab and in raw CSV exports.
 
 ## Features
 
-- Menu bar speed, daily totals, pause/resume and optional launch at login.
+- Current menu bar speed, a ten-minute average in the popup, daily average/totals, pause/resume and optional launch at login.
 - English and Simplified Chinese app interfaces, independent of input-source language.
 - Select which input languages to record; selecting none stops recording.
 - Per-language 7-day, 30-day, 90-day, one-year and five-year history, separate KPM columns and CSV export.
-- Application exclusions and an optional diagnostic view without input content.
+- Application exclusions, optional suspected-repeat/burst filtering and a diagnostic view without input content.
 - A real `NSTextView` validation path for composition, editing and character-commit coverage.
 - Check for Updates, manual download/install and optional automatic checks/downloads through Sparkle.
 
@@ -36,7 +38,7 @@ History uses daily periods for ranges up to 90 days, weekly periods for one year
 
 Download a macOS ZIP from [Releases](https://github.com/BenjaminD2023/Keytempo/releases), extract it, and move `Keytempo.app` to `/Applications` or `~/Applications`. Keep that location fixed before granting permissions.
 
-Current maintainer builds use a stable local **Apple Development** signing identity; they are **not Developer ID distribution or notarized**. macOS may still require first-launch approval. Older 1.1.1 downloads were ad hoc signed, which tied permissions to a changing binary hash. Migrating to the new certificate identity requires one new grant. Future builds keep that identity and installation path stable; actual permission retention still needs a user-authorized update check. Release assets identify their architecture; the locally tested build and automatic-update channel are Apple Silicon (`arm64`). Intel execution has not been verified.
+Current maintainer builds use a stable local **Apple Development** signing identity; they are **not Developer ID distribution or notarized**. macOS may still require first-launch approval. Older 0.1.1 downloads (original app/tag `1.1.1`) were ad hoc signed, which tied permissions to a changing binary hash. Migrating to the new certificate identity requires one new grant. On the maintainer Mac, an actual Sparkle update from original `1.2.0` build 9 to original `1.2.1` build 10 retained both Input Monitoring and Accessibility authorization after relaunch and an in-app recheck, without changing permission settings. This local result does not guarantee every Mac or confirm every app's editable-control coverage; future builds must preserve the signing identity and installation path. Release assets identify their architecture; the locally tested build and automatic-update channel are Apple Silicon (`arm64`). Intel execution has not been verified.
 
 The deployment target is **macOS 13 or later**. Actual runtime testing has been performed on an Apple M4 MacBook Air running macOS 27; older systems remain unverified.
 
@@ -54,7 +56,9 @@ The built-in validation editor works without these global permissions. Secure In
 
 Choose **Check for Updates…** in the app menu or Settings to check manually, then use the update window to download and install. Settings also controls automatic update checks and automatic download/install on quit. Sparkle checks a public HTTPS appcast and verifies Ed25519 signatures for the feed and update archive before installation; it does not upload typing statistics. A final relaunch may be needed to finish an update.
 
-The 1.1.1 app does not contain an updater; install the first updater-enabled release manually once. Updates do not grant privacy permissions, bypass macOS approval or convert global Chinese keystrokes into confirmed CPM. Certificate signing and download signatures protect different parts of the update process. See [release instructions](docs/RELEASING.md) for publisher setup and known signing limits.
+The 0.1.1 app (original app/tag `1.1.1`) does not contain an updater; install the first updater-enabled release manually once. Updates do not grant privacy permissions, bypass macOS approval or convert global Chinese keystrokes into confirmed CPM. Certificate signing and download signatures protect different parts of the update process. See [release instructions](docs/RELEASING.md) for publisher setup and known signing limits.
+
+Keytempo now uses `0.x` versions: historical `1.1.0` and `1.2.0` are documented as `0.1.0` and `0.2.0`; the new app is `0.3.0`. Existing signed `1.x` downloads and tags retain their original identifiers. Internal build numbers continue increasing, so `0.3.0` build 11 is newer for the updater than `1.2.1` build 10. See the [complete changelog and version mapping](CHANGELOG.md).
 
 ## Build and test
 
@@ -97,7 +101,11 @@ Candidate keys may represent selection rather than new characters. A bounded inp
 
 Paste, autocomplete and known synthetic events do not count as manual character output. Global metadata cannot identify every custom shortcut, macro or intercepted web key. Terminals, Vim modes, games and custom editors may remain unsupported or unknown. See [coverage and validation](docs/VALIDATION.md) and [adapter boundaries](docs/ADAPTERS.md).
 
-The no-space/candidate-estimate counting policy applies to new input. Existing aggregates are preserved rather than retrospectively reclassified. When a day contains both old and new policies, its combined rate may be unavailable because incompatible rules are not averaged; counts remain visible, and current speed starts from fresh samples after the update.
+The suspected-input heuristic is enabled by default and can be disabled in Settings without disabling shortcut, system-repeat or known-synthetic filtering. It applies only to global probable text-entry events. Twelve presses of the same physical key within three seconds, each less than half a second apart, are treated as suspected repetition. A dense burst also needs at least 16 events within 0.20 seconds, at least four distinct keys and at least eight gaps of 8 ms or less. Speed or regular timing alone is not a rejection rule. Short repeated text, editing and input-method candidate operations are retained; a legitimate long run of one key can be a false positive, so disable the heuristic when appropriate. Arbitrary random text and macros with human-like, unmarked metadata cannot be reliably identified.
+
+The filter buffers at most 24 content-free event summaries, forwards ordinary typing on the next different key and flushes a short final prefix after a one-shot half-second deadline. Original timestamps are preserved. Suspected input interrupts the segment, so removed events do not leave operation time hidden in the speed denominator. Diagnostics show suspected-repeat/burst counts and reasons, without input text or an ordered key sequence.
+
+Counting-policy changes apply to new input. Existing aggregates are preserved rather than retrospectively reclassified. When a day contains old and current rules, today's displayed average uses only current-rule input with explicit coverage; counts and duration retain all saved input. Historical rates across incompatible rules remain unavailable. Current and rolling speeds start from fresh samples after a rule change.
 
 ## Privacy and storage
 

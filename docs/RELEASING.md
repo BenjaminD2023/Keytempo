@@ -8,7 +8,7 @@ The former ad-hoc signature used a per-binary code hash as its designated requir
 
 A local build selects an available Apple Development identity, or the identity explicitly configured through `KEYTEMPO_SIGNING_IDENTITY`. The build records the source commit, clean-tree state and signing channel in the final app metadata. Verify the selected identity rather than assuming that a successful build is certificate signed. CI machines without that identity may build ad-hoc test artifacts; those artifacts **must not be published to the stable update feed**.
 
-The current maintainer release channel uses a local Apple Development certificate. It is **not Developer ID distribution and is not notarized**. It does not eliminate Gatekeeper first-launch approval. Migrating from the old ad-hoc app requires one new authorization; keeping the new identity stable addresses the cause of repeated grants, but actual Input Monitoring/Accessibility retention across a human-authorized update still needs to be verified. Do not claim that signature checks alone prove the TCC result.
+The current maintainer release channel uses a local Apple Development certificate. It is **not Developer ID distribution and is not notarized**. It does not eliminate Gatekeeper first-launch approval. Migrating from the old ad-hoc app requires one new authorization. The maintainer Mac completed a real production Sparkle upgrade from original `1.2.0` build 9 to original `1.2.1` build 10: after relaunch and an in-app permission recheck, both Input Monitoring and Accessibility remained authorized, the keyboard tap received events, and the designated requirement was unchanged. No permission settings or TCC records were modified. This establishes that local update path, not a guarantee for every Mac or proof of every app's editable-control coverage. Continue testing actual grants when signing identity, path or update packaging changes; signature checks alone do not prove the TCC result.
 
 Do not export the existing certificate/private key to GitHub. Do not weaken code requirements to an identifier-only expression, modify the TCC database, install system trust overrides or remove quarantine attributes as a workaround.
 
@@ -28,12 +28,20 @@ The first command creates a key only when one does not exist, otherwise reuses i
 
 The feed is `https://raw.githubusercontent.com/BenjaminD2023/Keytempo/main/appcast.xml`. Both archives and appcast XML are signed with Sparkle's official signing tool. The app requires a signed feed, and the publisher compares the Keychain public key with the key embedded in the app.
 
+## Versioning and changelog
+
+Keytempo uses `0.x` app versions and tags. The historical changelog names were normalized before `0.3.0`: `1.1.0 → 0.1.0`, `1.1.1 → 0.1.1`, `1.2.0 → 0.2.0` and `1.2.1 → 0.2.1`. Original signed archives, tags, embedded historical versions and feed URLs stay intact so old downloads and update references remain valid. Do not create new binary names that imply those historical archives were rebuilt as `0.x`.
+
+`CFBundleShortVersionString` is the displayed version and determines the new GitHub tag/asset name. `CFBundleVersion` is a strictly increasing positive integer used by Sparkle for ordering. The first normalized release is `0.3.0` **build 11**, newer than original `1.2.1` **build 10**, despite the lower displayed major number. Never reset the internal build to `1`, compare releases only by their displayed version, or edit signed historical feed items to hide the transition. Test discovery and installation from an actual old `1.x` app.
+
+Maintain the complete [CHANGELOG.md](../CHANGELOG.md) on every release. Use ISO dates and concrete `Added`, `Changed`, `Fixed`, `Removed`, `Deprecated` or `Security` entries when relevant, with release/compare links and explicit statistical or coverage changes. Preserve prior release facts under their normalized labels and original artifact aliases. Move completed unreleased entries into the new version and keep the next unreleased comparison pointed at that tag.
+
 ## Prepare a version
 
-1. Update `CFBundleShortVersionString` and increment integer `CFBundleVersion` in `Resources/Info.plist`.
-2. Add concrete changes and limitations to `CHANGELOG.md`.
+1. Update `CFBundleShortVersionString` (for example, `0.3.0`) and increment integer `CFBundleVersion` in `Resources/Info.plist`; the build must exceed every previously published build, including old `1.x` versions.
+2. Update the complete `CHANGELOG.md` with the release date, categorized changes, limitations and working compare links.
 3. Run `./scripts/test.sh` on a Mac. This checks core/store tests, update-feed fixtures, Release compilation, signing and isolated native integration checks. It does not replace physical-input or TCC validation.
-4. Review the app: current WPM/CPM, KPM, language settings, history, permissions, update controls and data preservation.
+4. Review the app: current WPM/CPM, the ten-minute average and its coverage, today's average, KPM, suspected-input controls/diagnostics, language settings, history, permissions, update controls and data preservation.
 5. Commit and push the reviewed source. Tag that exact commit as `v` plus the short version, then push the tag.
 6. Wait for the [CI and release-validation workflows](https://github.com/BenjaminD2023/Keytempo/actions) to pass. The tag workflow validates and packages but does not publish its ad-hoc app.
 7. Build again from the committed, clean source so the app's recorded commit matches the tag:
@@ -73,4 +81,4 @@ Publishing the feed last prevents updaters from discovering an asset that has no
 
 Current automatic-update assets are Apple Silicon (`arm64`), macOS 13 or later. Intel execution has not been validated and is not included in this feed. App and framework notices are included in the bundle; the source archive uses an explicit file allowlist and excludes local databases, diagnostics and signing files.
 
-Release notes must distinguish estimated global input from confirmed editor input, identify unavailable global Chinese CPM and report the real validation scope. CPU-attributed energy measurements do not establish a whole-device incremental battery target below 1 W. Changes to statistics rules or unsupported input paths must not be hidden by update packaging.
+Release notes must distinguish estimated global WPM from confirmed editor CPM and report the real validation scope. Global Chinese and English both use the same operation-based WPM estimate; global Chinese CPM remains unavailable without actual commit coverage. Describe suspected-repeat/burst filtering as a configurable metadata heuristic, not recognition of arbitrary random text or every macro, and disclose partial daily or session-window coverage. CPU-attributed energy measurements do not establish a whole-device incremental battery target below 1 W. Changes to statistics rules or unsupported input paths must not be hidden by update packaging.
