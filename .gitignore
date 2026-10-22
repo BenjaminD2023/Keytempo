@@ -1,0 +1,12 @@
+.build/
+dist/
+.DS_Store
+*.sqlite*
+artifacts/
+.swiftpm/
+.env
+.env.*
+!.env.example
+*.xcuserstate
+xcuserdata/
+.vscode/

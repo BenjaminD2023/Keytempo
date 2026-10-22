@@ -1,0 +1,33 @@
+name: Bug report
+description: Report a reproducible issue with Keytempo.
+body:
+  - type: markdown
+    attributes:
+      value: "Share metadata and steps only. Do not attach typed text, chat contents, clipboard data, credentials, or the macOS permissions database. Report security issues privately using SECURITY.md."
+  - type: input
+    id: version
+    attributes:
+      label: Keytempo version
+      placeholder: "1.1.1 (build 8)"
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: macOS version and processor
+      placeholder: "macOS 27, Apple Silicon"
+    validations:
+      required: true
+  - type: input
+    id: context
+    attributes:
+      label: App and input source
+      description: App name, input language, and input method only; no document titles or contents.
+      placeholder: "WeChat, Chinese, system Pinyin"
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps, expected result, and actual result
+      description: Include the selected menu unit and permission status if relevant.
+    validations:
+      required: true

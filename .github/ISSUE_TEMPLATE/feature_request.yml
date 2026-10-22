@@ -1,0 +1,16 @@
+name: Feature request
+description: Suggest an improvement to Keytempo.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested behavior
+      description: Describe how it should work while preserving privacy and low background overhead.
+    validations:
+      required: true

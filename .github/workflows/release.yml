@@ -1,0 +1,87 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag, matching Info.plist (for example v1.1.1)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-15
+    timeout-minutes: 25
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate tag and version
+        id: version
+        shell: zsh {0}
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          app_version="$(plutil -extract CFBundleShortVersionString raw -o - Resources/Info.plist)"
+          if [[ "$RELEASE_TAG" != "v$app_version" ]]; then
+            print -u2 "Tag $RELEASE_TAG does not match Info.plist version $app_version"
+            exit 1
+          fi
+          tag_commit="$(git rev-list -n 1 "refs/tags/$RELEASE_TAG")"
+          if [[ "$tag_commit" != "$(git rev-parse HEAD)" ]]; then
+            print -u2 "The checked out commit must match the existing release tag"
+            exit 1
+          fi
+          print "version=$app_version" >> "$GITHUB_OUTPUT"
+      - name: Unit tests, Release build and native integration checks
+        run: ./scripts/test.sh
+      - name: Source archive and checksums
+        shell: zsh {0}
+        env:
+          APP_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          ./scripts/package-source.sh
+          binary_architecture="$(lipo -archs dist/Keytempo.app/Contents/MacOS/Keytempo)"
+          if [[ "$binary_architecture" != arm64 ]]; then
+            print -u2 "This release job expects an Apple Silicon runner; got $binary_architecture"
+            exit 1
+          fi
+          cd dist
+          shasum -a 256 "Keytempo-${APP_VERSION}-macos-arm64.zip" "Keytempo-${APP_VERSION}-source.zip" > SHA256SUMS
+      - name: Publish GitHub Release
+        shell: zsh {0}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          APP_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          notes_file="$RUNNER_TEMP/keytempo-release-notes.md"
+          cat > "$notes_file" <<'NOTES'
+          Apple Silicon (arm64), macOS 13 or later. The app is ad hoc signed and is not notarized with Apple. Source and build instructions are included in the repository.
+
+          Input Monitoring and Accessibility permissions must be granted by the user. Updates may require permission renewal. Global typing statistics are estimates; global Chinese CPM is unavailable without a commit adapter.
+
+          Verify downloads against SHA256SUMS. The app includes the MIT copyright and license notice in Contents/Resources.
+
+          NOTES
+          cat CHANGELOG.md >> "$notes_file"
+          assets=("dist/Keytempo-${APP_VERSION}-macos-arm64.zip" "dist/Keytempo-${APP_VERSION}-source.zip" "dist/SHA256SUMS")
+          # Fail on an existing release rather than silently replacing published binaries.
+          gh release create "$RELEASE_TAG" "${assets[@]}" --verify-tag --title "Keytempo $APP_VERSION" --notes-file "$notes_file"
