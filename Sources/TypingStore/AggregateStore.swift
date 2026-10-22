@@ -63,7 +63,7 @@ public final class AggregateStore: @unchecked Sendable {
           PRIMARY KEY(day, timezone, rule, evidence, language));
         """
     public let url: URL
-    public init(url: URL) throws {
+    public init(url: URL, now: Date = Date(), timeZone: TimeZone = .current) throws {
         self.url = url
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         guard sqlite3_open_v2(url.path, &db, SQLITE_OPEN_CREATE | SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK else {
@@ -77,7 +77,7 @@ public final class AggregateStore: @unchecked Sendable {
             guard version <= 2 else { throw StoreError.unsupportedVersion(version) }
             try execute("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA secure_delete=ON;")
             try prepareSchema()
-            try prune()
+            try prune(now: now, timeZone: timeZone)
             try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
         } catch {
             sqlite3_close(db); db = nil
@@ -197,9 +197,11 @@ public final class AggregateStore: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         try execute("BEGIN IMMEDIATE; DELETE FROM daily; COMMIT; PRAGMA wal_checkpoint(TRUNCATE); VACUUM;")
     }
-    private func prune() throws {
-        let cutoff = Calendar.current.date(byAdding: .day, value: -1826, to: Date())!
-        let formatter = DateFormatter(); formatter.dateFormat = "yyyy-MM-dd"; formatter.locale = Locale(identifier: "en_US_POSIX")
+    private func prune(now: Date, timeZone: TimeZone) throws {
+        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = timeZone
+        let cutoff = calendar.date(byAdding: .year, value: -5, to: now)!
+        let formatter = DateFormatter(); formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = calendar; formatter.timeZone = timeZone; formatter.dateFormat = "yyyy-MM-dd"
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(db, "DELETE FROM daily WHERE day<?", -1, &statement, nil) == SQLITE_OK, let statement else { throw failure() }
         bind(formatter.string(from: cutoff), at: 1, statement: statement)

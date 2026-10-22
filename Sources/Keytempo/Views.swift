@@ -303,19 +303,63 @@ struct StatisticsView: View {
         historyUnit == .wpm ? L("已确认敲键折算（估算）") : L("真实上屏")
     }
 
+    private var historyGranularityLabel: String {
+        switch model.historyGranularity {
+        case .day: return L("按日汇总")
+        case .week: return L("按周汇总")
+        case .month: return L("按月汇总")
+        }
+    }
+    private var historyPeriodColumn: String {
+        switch model.historyGranularity {
+        case .day: return L("日期")
+        case .week: return L("周期起始日期")
+        case .month: return L("月份")
+        }
+    }
+    private func historyPeriod(_ day: String) -> String {
+        model.historyGranularity == .month ? String(day.prefix(7)) : day
+    }
+    private func historyAxisLabel(_ day: String) -> String {
+        switch model.historyGranularity {
+        case .day: return String(day.suffix(5))
+        case .week: return day
+        case .month: return String(day.prefix(7))
+        }
+    }
+
     private var history: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 HStack {
-                    Text(L("每日输入趋势")).font(.title2.weight(.semibold))
+                    Text(L("输入趋势")).font(.title2.weight(.semibold))
                     Spacer()
                     Picker(L("时间范围"), selection: Binding(get: { model.historyDays }, set: { model.loadHistory(days: $0) })) {
                         Text(L("最近 7 天")).tag(7)
                         Text(L("最近 30 天")).tag(30)
-                    }.pickerStyle(.segmented).frame(width: 235)
+                        Text(L("最近 90 天")).tag(90)
+                        Text(L("最近 1 年")).tag(365)
+                        Text(L("最近 5 年")).tag(1826)
+                    }.pickerStyle(.menu).frame(width: 190)
                     Button(L("导出 CSV…"), action: model.exportCSV)
                 }
-                if model.history.isEmpty {
+                HStack {
+                    Text(historyGranularityLabel)
+                    Spacer()
+                    Text(L("%@ 至 %@", model.historyStartDay, model.historyEndDay)).monospacedDigit()
+                }.font(.callout).foregroundStyle(.secondary)
+                Text(L("仅展示已保存的历史，不补造尚未记录的数据。"))
+                    .font(.caption).foregroundStyle(.secondary)
+                if model.historyLoading {
+                    ProgressView(L("正在读取历史…"))
+                        .frame(maxWidth: .infinity).frame(height: 220)
+                } else if let error = model.historyError {
+                    VStack(spacing: 12) {
+                        Label(L("历史读取失败"), systemImage: "exclamationmark.triangle").font(.headline)
+                        Text(L(error)).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
+                        Button(L("重试加载")) { model.loadHistory(days: model.historyDays) }
+                    }.frame(maxWidth: .infinity).frame(minHeight: 180)
+                } else if model.history.isEmpty {
                     VStack(spacing: 12) {
                         Image(systemName: "chart.bar.xaxis").font(.system(size: 40)).foregroundStyle(.tertiary)
                         Text(L("还没有历史输入记录")).font(.headline)
@@ -332,7 +376,7 @@ struct StatisticsView: View {
                         Spacer()
                         Text(primaryTitle(historyUnit)).font(.callout).foregroundStyle(.secondary)
                     }
-                    Text(L("每次只绘制一种输入语言，WPM 与 CPM 不混合。缺少真实上屏或样本不足的日期不会绘制为 0。"))
+                    Text(L("每次只绘制一种输入语言，WPM 与 CPM 不混合。缺少真实上屏或样本不足的周期不会绘制为 0。"))
                         .font(.caption).foregroundStyle(.secondary)
                     if historyHasRates {
                         historyChart.id(selectedHistoryLanguage)
@@ -350,14 +394,14 @@ struct StatisticsView: View {
                     combinedHistoryTable
                     historyTable
                 }
-                Text(L("历史按日期与输入源语言分别汇总，不跨语言平均 WPM／CPM。旧记录语言未知，只保留原敲键与时长。"))
+                Text(L("历史按所选周期与输入源语言分别汇总，不跨语言平均 WPM／CPM。旧记录语言未知，只保留原敲键与时长。"))
                     .font(.caption).foregroundStyle(.secondary)
-                Text(L("速度按实际覆盖时长加权，不平均每日速度。不同统计规则保留在 CSV 中，不能视为完全可比。"))
+                Text(L("速度按汇总数量与实际覆盖时长计算，不直接平均各日速度。不同统计规则保留在 CSV 中，不能视为完全可比。"))
                     .font(.caption).foregroundStyle(.secondary)
             }.padding(24)
         }
         .onAppear { model.historyVisible = true; model.loadHistory(days: model.historyDays) }
-        .onDisappear { model.historyVisible = false }
+        .onDisappear { model.historyVisible = false; model.releaseHistory() }
     }
 
     private var historyChart: some View {
@@ -384,16 +428,17 @@ struct StatisticsView: View {
             AxisMarks(values: .automatic(desiredCount: model.historyDays == 7 ? 7 : 6)) { value in
                 AxisGridLine()
                 AxisValueLabel(anchor: .top) {
-                    if let date = value.as(String.self) { Text(String(date.suffix(5))) }
+                    if let date = value.as(String.self) { Text(historyAxisLabel(date)) }
                 }
             }
         }
         .frame(height: 235)
-        .accessibilityLabel(L("所选语言最近 %d 天的每日主要速度", model.historyDays))
+        .accessibilityLabel(L("所选语言的主要速度趋势，%@", historyGranularityLabel))
     }
 
     private struct CombinedHistoryDay: Identifiable {
         let day: String
+        let periodEnd: String
         let keys: Int
         let kpm: Double?
         var id: String { day }
@@ -408,25 +453,26 @@ struct StatisticsView: View {
                     entry.trimmingCharacters(in: .whitespaces).split(separator: "@").first.map(String.init)
                 }
             })
-            let rate = rules.count <= 1 && intervals >= 4 && seconds >= 0.5 ? 60 * intervals / seconds : nil
-            return CombinedHistoryDay(day: day, keys: rows.reduce(0) { $0 + $1.estimatedKeys }, kpm: rate)
+            let rate = rows.allSatisfy { $0.rejectedRows == 0 } && rules.count <= 1 && intervals >= 4 && seconds >= 0.5 ? 60 * intervals / seconds : nil
+            return CombinedHistoryDay(day: day, periodEnd: rows.map(\.periodEnd).filter { !$0.isEmpty }.max() ?? day,
+                                      keys: rows.reduce(0) { $0 + $1.estimatedKeys }, kpm: rate)
         }.sorted { $0.day > $1.day }
     }
 
     private var combinedHistoryTable: some View {
         VStack(alignment: .leading, spacing: 9) {
-            Text(L("每日合并统计（估算）")).font(.headline).foregroundStyle(AppStyle.estimated)
+            Text(L("合并统计（估算）")).font(.headline).foregroundStyle(AppStyle.estimated)
             Text(L("合并全部记录语言的数量与间隔；KPM 按实际时长加权，不连接跨语言停顿。"))
                 .font(.caption).foregroundStyle(.secondary)
             Grid(alignment: .leading, horizontalSpacing: 24, verticalSpacing: 9) {
                 GridRow {
-                    Text(L("日期"))
+                    Text(historyPeriodColumn)
                     Text(L("合并敲键数量"))
                     Text(L("合并 KPM"))
                 }.font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 ForEach(combinedHistoryDays) { day in
                     GridRow {
-                        Text(day.day)
+                        Text(historyPeriod(day.day)).help(L("%@ 至 %@", day.day, day.periodEnd.isEmpty ? day.day : day.periodEnd))
                         Text(compactKeystrokeCount(day.keys)).help(day.keys.formatted())
                         Text(cadence(day.kpm))
                             .help(L("新旧计数规则并存时不合并速度；当前速度会从更新后重新采样。"))
@@ -442,7 +488,7 @@ struct StatisticsView: View {
         ScrollView(.horizontal) {
             Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 10) {
                 GridRow {
-                    Text(L("日期"))
+                    Text(historyPeriodColumn)
                     Text(L("输入语言"))
                     Text(L("主要速度 · 接入路径"))
                     Text(L("主要速度 · 全局估算"))
@@ -452,7 +498,7 @@ struct StatisticsView: View {
                 Divider().gridCellColumns(6)
                 ForEach(model.history.sorted(by: { $0.day == $1.day ? $0.language < $1.language : $0.day > $1.day })) { day in
                     GridRow {
-                        Text(day.day)
+                        Text(historyPeriod(day.day)).help(L("%@ 至 %@", day.day, day.periodEnd.isEmpty ? day.day : day.periodEnd))
                         Text(model.languageName(day.language))
                         Text(primaryCadence(day.primaryRate, unit: day.primaryUnit))
                         Text(day.primaryUnit == .cpm ? L("不可用") : primaryCadence(day.estimatedPrimaryRate, unit: day.primaryUnit))

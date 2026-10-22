@@ -7,6 +7,17 @@ import TypingStore
 // Read/written only on diskQueue; retained by the main actor until completion.
 private final class WriteReceipt: @unchecked Sendable { var succeeded: Bool? }
 
+private struct HistorySelection: Equatable, Sendable {
+    let days: Int
+    let startDay: String
+    let endDay: String
+}
+private struct HistoryReadRequest: Sendable {
+    let token: UInt64
+    let generation: UInt64
+    let selection: HistorySelection
+}
+
 struct MetricDisplay: Equatable {
     var language = "und"
     var keys = 0, edits = 0, composition = 0
@@ -45,6 +56,7 @@ struct InputLanguageOption: Identifiable, Equatable {
 struct HistoryDay: Identifiable {
     var id: String { day + "|" + language }
     var day: String
+    var periodEnd = ""
     var language = "und"
     var keys = 0, estimatedKeys = 0, edits = 0
     var characters = 0
@@ -52,6 +64,7 @@ struct HistoryDay: Identifiable {
     var kpm: Double?, estimatedKPM: Double?
     var cpm: Double?
     var rules: String
+    var rejectedRows = 0
     var primaryUnit: PrimaryTypingUnit { TypingRate.primaryUnit(forLanguage: language) }
     var primaryRate: Double? {
         switch primaryUnit { case .wpm: return TypingRate.estimatedWPM(fromKPM: kpm); case .cpm: return cpm; case .unknown: return nil }
@@ -92,6 +105,11 @@ struct HistoryDay: Identifiable {
     @Published var hasAccessibilityPermission = false
     @Published var history: [HistoryDay] = []
     @Published var historyDays = 7
+    @Published private(set) var historyStartDay = ""
+    @Published private(set) var historyEndDay = ""
+    @Published private(set) var historyLoading = false
+    @Published private(set) var historyError: String?
+    var historyGranularity: HistoryGranularity { .forHistoryDays(historyDays) }
     @Published var excludedAppsText = UserDefaults.standard.string(forKey: "excludedApps") ?? "com.apple.Terminal\ncom.mitchellh.ghostty\ncom.googlecode.iterm2"
     @Published var maximumGap = UserDefaults.standard.object(forKey: "maximumGap") as? Double ?? 3
     @Published var menuDisplay = UserDefaults.standard.string(forKey: "menuDisplay") ?? "speed"
@@ -138,6 +156,11 @@ struct HistoryDay: Identifiable {
     private var estimatedRhythm = RecentIntervalRhythm()
     private var estimatedRhythmHasFreshInterval = false
     private var lastEstimatedInputTime: Double?
+    private var historySelection: HistorySelection?
+    private var loadedHistoryRows: [String: StoredAggregate] = [:]
+    private var historyReadToken: UInt64 = 0
+    private var activeHistoryRead: HistoryReadRequest?
+    private var pendingHistoryRead: HistoryReadRequest?
 
     static func rule(_ maximum: Double) -> String { "adaptive-v3-no-space-ime-estimate-max" + String(format: "%.1f", maximum) }
     static func day(_ date: Date = Date()) -> String {
@@ -507,39 +530,112 @@ struct HistoryDay: Identifiable {
         else if phase == "typing" { nextStatus = "正在统计 · \(localPath ? "已确认" : "估算")输入段" }
         else { nextStatus = "候选输入段 · 数据不足" }
         if status != nextStatus { status = nextStatus }
-        if statisticsVisible && historyVisible { loadHistory(days: historyDays) }
         onMenuUpdate?()
         if snap.phase == .idle && !engine.completionPending { stopUI() }
     }
+    /// Explicit range/view requests only; a typing UI tick never queries disk
+    /// or re-aggregates the long-term history graph.
     func loadHistory(days: Int) {
-        historyDays = days
-        let calendar = Calendar.current
-        let dates = (0..<days).reversed().map { Self.day(calendar.date(byAdding: .day, value: -$0, to: Date())!) }
-        let dateSet = Set(dates)
-        let recent = cached.values.filter { dateSet.contains($0.day) }
-        let grouped = Dictionary(grouping: recent, by: { $0.day + "|" + $0.language })
-        let presentLanguages = Set(recent.map(\.language))
-        let languages = presentLanguages.isEmpty ? [currentInputLanguageCode] : presentLanguages.sorted()
-        history = dates.flatMap { day in
-            languages.map { language in
-                let rows = grouped[day + "|" + language] ?? []
-                let c = rows.filter { $0.evidence == "confirmed" }, p = rows.filter { $0.evidence == "probable" }
-                let ci = c.reduce(0) { $0 + $1.intervals }, cs = c.reduce(0) { $0 + $1.seconds }
-                let pi = p.reduce(0) { $0 + $1.intervals }, ps = p.reduce(0) { $0 + $1.seconds }
-                let characterIntervals = c.reduce(0) { $0 + $1.characterIntervals }
-                let characterSeconds = c.reduce(0) { $0 + $1.characterSeconds }
-                let ratedCharacters = c.reduce(0) { $0 + $1.ratedCharacters }
-                let rules = Set(rows.map { $0.rule + "@" + $0.timezone }).sorted()
-                let mixed = Set(rows.map(\.rule)).count > 1
-                return HistoryDay(day: day, language: language, keys: c.reduce(0) { $0 + $1.keys }, estimatedKeys: p.reduce(0) { $0 + $1.keys },
-                                  edits: rows.reduce(0) { $0 + $1.edits }, characters: c.reduce(0) { $0 + $1.characters },
-                                  seconds: cs, estimatedSeconds: ps, intervals: ci, estimatedIntervals: pi,
-                                  kpm: !mixed && ci >= 4 && cs >= 0.5 ? 60 * ci / cs : nil,
-                                  estimatedKPM: !mixed && pi >= 4 && ps >= 0.5 ? 60 * pi / ps : nil,
-                                  cpm: !mixed && characterIntervals >= 4 && characterSeconds >= 0.5 && ratedCharacters > 0 ? 60 * ratedCharacters / characterSeconds : nil,
-                                  rules: rules.joined(separator: "; "))
+        let selected = [7, 30, 90, 365, 1826].contains(days) ? days : 7
+        historyDays = selected
+        let range: HistoryDateRange
+        if selected == 1826 { range = .years(5, endingOn: Date(), timeZone: .current) }
+        else if selected == 365 { range = .years(1, endingOn: Date(), timeZone: .current) }
+        else { range = .days(selected, endingOn: Date(), timeZone: .current) }
+        let selection = HistorySelection(days: selected, startDay: range.startDay, endDay: range.endDay)
+        historySelection = selection
+        historyStartDay = selection.startDay; historyEndDay = selection.endDay
+        historyError = nil
+        refreshLoadedHistory()
+        guard !clearing, store != nil else { historyLoading = false; return }
+        // Reopening the same range while its read is still in flight reuses
+        // that read and cancels an intervening pending range request.
+        if let active = activeHistoryRead, active.generation == generation, active.selection == selection {
+            pendingHistoryRead = nil; historyLoading = true; return
+        }
+        if let pending = pendingHistoryRead, pending.generation == generation, pending.selection == selection {
+            historyLoading = true; return
+        }
+        historyReadToken &+= 1
+        pendingHistoryRead = HistoryReadRequest(token: historyReadToken, generation: generation, selection: selection)
+        historyLoading = true
+        startHistoryRead()
+    }
+    func refreshHistoryIfVisible() {
+        guard statisticsVisible && historyVisible else { return }
+        loadHistory(days: historyDays)
+    }
+    func releaseHistory() {
+        historyVisible = false
+        invalidateHistoryReads(clearRows: true)
+    }
+    private func startHistoryRead() {
+        guard !clearing, activeHistoryRead == nil, let request = pendingHistoryRead, let store else { return }
+        pendingHistoryRead = nil
+        activeHistoryRead = request
+        diskQueue.async { [weak self] in
+            let result = Result { try store.query(since: request.selection.startDay, until: request.selection.endDay) }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.activeHistoryRead?.token == request.token else { return }
+                self.activeHistoryRead = nil
+                if !self.clearing && self.generation == request.generation && self.historySelection == request.selection {
+                    switch result {
+                    case let .success(rows):
+                        self.loadedHistoryRows = Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0) })
+                        // cached rows are complete recent totals including any
+                        // pending/in-flight writes; replace, never add twice.
+                        self.refreshLoadedHistory()
+                        self.historyError = nil
+                    case let .failure(error): self.historyError = error.localizedDescription
+                    }
+                }
+                if self.pendingHistoryRead != nil { self.startHistoryRead() }
+                self.historyLoading = self.activeHistoryRead != nil || self.pendingHistoryRead != nil
             }
         }
+    }
+    private func refreshLoadedHistory() {
+        guard let selection = historySelection else { return }
+        var rows = loadedHistoryRows.filter { $0.value.day >= selection.startDay && $0.value.day <= selection.endDay }
+        for row in cached.values where row.day >= selection.startDay && row.day <= selection.endDay { rows[row.id] = row }
+        publishHistory(rows: Array(rows.values), selection: selection)
+    }
+    private func publishHistory(rows: [StoredAggregate], selection: HistorySelection) {
+        let input = rows.map { row in
+            HistoryMetricRow(day: row.day, language: row.language,
+                             evidence: Evidence(rawValue: row.evidence) ?? .unknown,
+                             rule: row.rule, timezone: row.timezone,
+                             keys: row.keys, edits: row.edits, composition: row.composition,
+                             characters: row.characters, intervals: row.intervals, seconds: row.seconds,
+                             ratedCharacters: row.ratedCharacters, characterIntervals: row.characterIntervals,
+                             characterSeconds: row.characterSeconds)
+        }
+        let buckets = HistoryAggregation.aggregate(input, granularity: historyGranularity, timeZone: .current,
+                                                   startDay: selection.startDay, endDay: selection.endDay)
+        let grouped = Dictionary(grouping: buckets, by: { $0.periodStart + "|" + $0.language })
+        history = grouped.keys.sorted().compactMap { key in
+            guard let group = grouped[key], let first = group.first else { return nil }
+            let confirmed = group.first { $0.evidence == .confirmed }
+            let estimated = group.first { $0.evidence == .probable }
+            let rules = Set(group.flatMap(\.rules))
+            let mixed = rules.count > 1
+            return HistoryDay(day: first.periodStart, periodEnd: group.map(\.periodEnd).max() ?? first.periodEnd,
+                              language: first.language, keys: confirmed?.keys ?? 0, estimatedKeys: estimated?.keys ?? 0,
+                              edits: group.reduce(0) { $0 + $1.edits }, characters: confirmed?.characters ?? 0,
+                              seconds: confirmed?.seconds ?? 0, estimatedSeconds: estimated?.seconds ?? 0,
+                              intervals: confirmed?.intervals ?? 0, estimatedIntervals: estimated?.intervals ?? 0,
+                              kpm: mixed ? nil : confirmed?.kpm, estimatedKPM: mixed ? nil : estimated?.kpm,
+                              cpm: mixed ? nil : confirmed?.cpm, rules: rules.sorted().joined(separator: "; "),
+                              rejectedRows: group.reduce(0) { $0 + $1.rejectedRows })
+        }
+    }
+    private func invalidateHistoryReads(clearRows: Bool) {
+        historyReadToken &+= 1
+        historySelection = nil; pendingHistoryRead = nil
+        historyLoading = false; historyError = nil
+        if clearRows { loadedHistoryRows.removeAll(); history.removeAll() }
+        // An existing disk read may finish, but its selection/generation can
+        // no longer publish. Its completion releases the one in-flight slot.
     }
     func exportCSV() {
         let panel = NSSavePanel(); panel.nameFieldStringValue = "Keytempo-\(Self.day()).csv"; panel.allowedContentTypes = [.commaSeparatedText]
@@ -559,6 +655,7 @@ struct HistoryDay: Identifiable {
     func clearHistory() {
         guard let store else { return }
         clearing = true; saveWork?.cancel(); saveWork = nil; interruptEngine()
+        invalidateHistoryReads(clearRows: false)
         diskQueue.async {
             let result = Result { try store.clear() }
             DispatchQueue.main.async {
@@ -567,6 +664,7 @@ struct HistoryDay: Identifiable {
                     self.generation &+= 1; self.saveWork?.cancel(); self.saveWork = nil
                     self.pending.removeAll(); self.inFlight.removeAll()
                     self.cached.removeAll()
+                    self.invalidateHistoryReads(clearRows: true)
                     self.completedPrimaryMetric = nil; self.completedKPMMetric = nil
                     self.consumedCompletionRevision = 0; self.completionPending = false
                     self.estimatedRhythm.reset(); self.lastEstimatedInputTime = nil; self.estimatedRhythmHasFreshInterval = false
@@ -651,6 +749,7 @@ struct HistoryDay: Identifiable {
     } catch { failures.append("FAIL: clear/quit regression: \(error.localizedDescription)") }
     failures += runCurrentMenuChecks()
     failures += runCombinedEstimateChecks()
+    failures += runHistoryProjectionChecks()
     return failures
 }
 
@@ -779,4 +878,48 @@ struct HistoryDay: Identifiable {
     if model.estimatedRecentKPM != nil { failures.append("FAIL: a backwards event timestamp retained an old rhythm") }
     model.flushBeforeExit()
     return failures
+}
+
+/// Store → recent cache → monthly presentation stays synchronous for the first
+/// frame; the complete older range is subsequently read on the utility queue.
+@MainActor private func runHistoryProjectionChecks() -> [String] {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Keytempo-history-check-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let calendar = Calendar.current, today = calendar.startOfDay(for: Date())
+    let first: Date
+    let second: Date
+    if calendar.component(.day, from: today) >= 2 {
+        first = calendar.dateInterval(of: .month, for: today)!.start
+        second = calendar.date(byAdding: .day, value: 1, to: first)!
+    } else {
+        first = calendar.date(byAdding: .day, value: -2, to: today)!
+        second = calendar.date(byAdding: .day, value: -1, to: today)!
+    }
+    do {
+        let database = try AggregateStore(url: directory.appendingPathComponent("statistics.sqlite"))
+        var fast = StoredAggregate(day: AppModel.day(first), timezone: TimeZone.current.identifier, rule: "history-test", evidence: "probable", language: "en")
+        fast.keys = 5; fast.intervals = 4; fast.seconds = 0.4
+        var slow = fast; slow.day = AppModel.day(second); slow.seconds = 2
+        var chinese = StoredAggregate(day: AppModel.day(second), timezone: TimeZone.current.identifier, rule: "history-test", evidence: "confirmed", language: "zh")
+        chinese.keys = 5; chinese.intervals = 4; chinese.seconds = 0.8
+        chinese.characters = 2; chinese.ratedCharacters = 2; chinese.characterIntervals = 4; chinese.characterSeconds = 0.8
+        try database.save([fast, slow, chinese])
+        let model = AppModel(dataDirectory: directory, monitoringEnabled: false)
+        model.loadHistory(days: 1826)
+        var failures = [String]()
+        let english = model.history.first { $0.language == "en" }
+        let chineseRow = model.history.first { $0.language == "zh" }
+        if model.historyGranularity != .month || model.history.count != 2 || english?.estimatedKeys != 10 || abs((english?.estimatedKPM ?? 0) - 200) > 1e-6 || abs((english?.estimatedPrimaryRate ?? 0) - 40) > 1e-6 {
+            failures.append("FAIL: monthly history projection lost language/counts or averaged daily rates")
+        }
+        if chineseRow?.characters != 2 || abs((chineseRow?.cpm ?? 0) - 150) > 1e-6 {
+            failures.append("FAIL: monthly history projection lost confirmed character coverage")
+        }
+        let range = HistoryDateRange.years(5, endingOn: today, timeZone: .current)
+        if model.historyStartDay != range.startDay || model.historyEndDay != range.endDay || model.history.contains(where: { $0.periodEnd.isEmpty }) {
+            failures.append("FAIL: history projection lost calendar range or bucket endpoints")
+        }
+        model.flushBeforeExit()
+        return failures
+    } catch { return ["FAIL: isolated history projection: \(error.localizedDescription)"] }
 }

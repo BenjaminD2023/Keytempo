@@ -33,6 +33,22 @@ final class AggregateStoreTests {
         #expect(throws: (any Error).self) { try AggregateStore(url: url) }
     }
 
+    @Test func testFiveCalendarYearsRetainLeapBoundaryAndQueryOlderHistory() throws {
+        let url = location(); defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let utc = TimeZone(secondsFromGMT: 0)!
+        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = utc
+        let reference = calendar.date(from: DateComponents(year: 2024, month: 3, day: 1, hour: 12))!
+        let days = ["2019-02-28", "2019-03-01", "2024-03-01"]
+        do {
+            let store = try AggregateStore(url: url, now: reference, timeZone: utc)
+            try store.save(days.map { StoredAggregate(day: $0, timezone: "UTC", rule: "v1", evidence: "probable", language: "en") })
+        }
+        let reopened = try AggregateStore(url: url, now: reference, timeZone: utc)
+        let retained = try reopened.query(since: "2019-01-01", until: "2024-03-01")
+        #expect(retained.map(\.day) == ["2019-03-01", "2024-03-01"])
+        #expect(try reopened.query(since: "2019-03-01", until: "2019-03-31").count == 1)
+    }
+
     private let legacySchema = """
         CREATE TABLE daily (
           day TEXT NOT NULL, timezone TEXT NOT NULL, rule TEXT NOT NULL, evidence TEXT NOT NULL,

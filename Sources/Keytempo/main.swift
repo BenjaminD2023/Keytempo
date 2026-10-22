@@ -100,7 +100,8 @@ import TypingCore
     private func showStatistics() {
         popover.performClose(nil)
         if statsWindow == nil { statsWindow = window(title: L("Keytempo · 输入统计"), view: StatisticsView(model: model), size: NSSize(width: 940, height: 700)) }
-        model.statisticsVisible = true; model.loadHistory(days: model.historyDays)
+        model.statisticsVisible = true
+        if model.historyVisible { model.loadHistory(days: model.historyDays) }
         NSApp.activate(ignoringOtherApps: true); statsWindow?.makeKeyAndOrderFront(nil)
     }
     @objc private func showSettings() {
@@ -112,13 +113,16 @@ import TypingCore
     func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow else { return }
         if window === statsWindow {
-            model.statisticsVisible = false; model.historyVisible = false; model.interruptConfirmed()
+            model.statisticsVisible = false; model.historyVisible = false; model.releaseHistory(); model.interruptConfirmed()
             // Drop editor/Charts state after closing; the menu does not retain a hidden dashboard.
             window.contentViewController = nil; statsWindow = nil
         } else if window === settingsWindow { window.contentViewController = nil; settingsWindow = nil }
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
-    func applicationDidBecomeActive(_ notification: Notification) { model?.monitor.checkSystemState(); model?.refreshSnapshot() }
+    func applicationDidBecomeActive(_ notification: Notification) {
+        model?.monitor.checkSystemState(); model?.refreshSnapshot()
+        model?.refreshHistoryIfVisible()
+    }
     func applicationWillTerminate(_ notification: Notification) { model.flushBeforeExit() }
 }
 

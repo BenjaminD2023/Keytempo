@@ -2,6 +2,9 @@
 
 ## 1.1.1 — 2026-10-22
 
+- Add 90-day, one-year and five-year history ranges with on-demand database loading and daily/weekly/monthly aggregation.
+- Calculate long-range rates from summed interval/character numerators and actual covered duration while preserving language, evidence and counting-rule boundaries.
+
 - Restore the menu bar to the current input segment, with active updates around once per second.
 - Select WPM or CPM from the current input-source language; clear stale rates at language/source changes instead of retaining a previous English WPM value.
 - Preserve the separate KPM menu option and honest unavailable CPM state when global character commits are not covered.

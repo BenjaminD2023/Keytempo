@@ -25,9 +25,11 @@ The daily overview and menu popup show one **estimated keystroke counter** for e
 - Menu bar speed, daily totals, pause/resume and optional launch at login.
 - English and Simplified Chinese app interfaces, independent of input-source language.
 - Select which input languages to record; selecting none stops recording.
-- Per-language 7-day and 30-day history, separate KPM columns and CSV export.
+- Per-language 7-day, 30-day, 90-day, one-year and five-year history, separate KPM columns and CSV export.
 - Application exclusions and an optional diagnostic view without input content.
 - A real `NSTextView` validation path for composition, editing and character-commit coverage.
+
+History uses daily periods for ranges up to 90 days, weekly periods for one year and monthly periods for five years. Rates are recalculated from aggregate numerators and actual covered duration, never by averaging daily speeds. Language, evidence and rule boundaries remain separate. Long ranges load from SQLite when opened or selected, without a once-per-second database poll or a larger startup cache. Only previously saved history is shown; selecting five years does not reconstruct missing past activity. Startup retention keeps up to five calendar years and 50,000 aggregate rows. Closing history releases its loaded rows.
 
 ## Install
 
