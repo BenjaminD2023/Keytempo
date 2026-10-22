@@ -43,6 +43,7 @@ Already published signed archives, source tags and download URLs retain their or
 ### Security
 
 - Verify a real, in-place Sparkle upgrade from original `1.2.0` build 9 to original `1.2.1` build 10 on the maintainer Mac: Input Monitoring and Accessibility grants remained available after relaunch and an in-process permission recheck, with the same code-signing requirement. This is a measured local result, not a guarantee for every Mac or a proof of every app's editable-control coverage.
+- After publication, verify the production upgrade from `1.2.1` build 10 to `0.3.0` build 11, preserving both grants and existing aggregates. A subsequent update check correctly identifies `0.3.0` as current despite older releases' larger display version numbers.
 
 The suspected-input filter uses metadata heuristics. It does not understand whether arbitrary text is intentional, identify every macro, or reject code, punctuation and repeated words for their spelling. Diagnostic reasons and the ability to disable the heuristic are provided for possible false positives; confirmed editor input remains separate from global estimates.
 
