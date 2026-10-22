@@ -27,11 +27,11 @@ included = [
     "Package.swift", "Package.resolved", ".gitignore", "LICENSE", "NOTICE",
     "README.md", "README.zh-CN.md", "CHANGELOG.md", "CONTRIBUTING.md",
     "SECURITY.md", "ACKNOWLEDGMENTS.md", "ACKNOWLEDGEMENTS.md",
-    "PERFORMANCE.md", "POWER.md", "Resources", "Sources", "Tests", "scripts",
+    "PERFORMANCE.md", "POWER.md", "appcast.xml", "Resources", "Sources", "Tests", "scripts",
     "docs", ".github",
 ]
 excluded_parts = {".git", ".build", "dist", "artifacts", "__pycache__", ".DS_Store"}
-excluded_files = ("*.sqlite*", "*.pyc", ".env", ".env.*", "*.p12", "*.mobileprovision")
+excluded_files = ("*.sqlite*", "*.pyc", ".env", ".env.*", "*.key", "*.p8", "*.p12", "*.pfx", "*.pem", "*.keychain*", "*.mobileprovision")
 files = set()
 for name in included:
     path = root / name

@@ -28,6 +28,7 @@ The daily overview and menu popup show one **estimated keystroke counter** for e
 - Per-language 7-day, 30-day, 90-day, one-year and five-year history, separate KPM columns and CSV export.
 - Application exclusions and an optional diagnostic view without input content.
 - A real `NSTextView` validation path for composition, editing and character-commit coverage.
+- Check for Updates, manual download/install and optional automatic checks/downloads through Sparkle.
 
 History uses daily periods for ranges up to 90 days, weekly periods for one year and monthly periods for five years. Rates are recalculated from aggregate numerators and actual covered duration, never by averaging daily speeds. Language, evidence and rule boundaries remain separate. Long ranges load from SQLite when opened or selected, without a once-per-second database poll or a larger startup cache. Only previously saved history is shown; selecting five years does not reconstruct missing past activity. Startup retention keeps up to five calendar years and 50,000 aggregate rows. Closing history releases its loaded rows.
 
@@ -35,7 +36,7 @@ History uses daily periods for ranges up to 90 days, weekly periods for one year
 
 Download a macOS ZIP from [Releases](https://github.com/BenjaminD2023/Keytempo/releases), extract it, and move `Keytempo.app` to `/Applications` or `~/Applications`. Keep that location fixed before granting permissions.
 
-The current app is ad hoc signed, **not Developer ID signed or notarized**. macOS may require confirmation before opening it. Rebuilding, replacing or moving the app can invalidate its existing permissions. Release assets identify their architecture; the locally tested build is Apple Silicon (`arm64`). Intel execution has not been verified.
+Current maintainer builds use a stable local **Apple Development** signing identity; they are **not Developer ID distribution or notarized**. macOS may still require first-launch approval. Older 1.1.1 downloads were ad hoc signed, which tied permissions to a changing binary hash. Migrating to the new certificate identity requires one new grant. Future builds keep that identity and installation path stable; actual permission retention still needs a user-authorized update check. Release assets identify their architecture; the locally tested build and automatic-update channel are Apple Silicon (`arm64`). Intel execution has not been verified.
 
 The deployment target is **macOS 13 or later**. Actual runtime testing has been performed on an Apple M4 MacBook Air running macOS 27; older systems remain unverified.
 
@@ -48,6 +49,12 @@ For global estimates, allow Keytempo in **System Settings → Privacy & Security
 3. Return to Keytempo Settings and choose **Check permissions again**. If macOS still associates permissions with an older build, reselect the installed app and restart it.
 
 The built-in validation editor works without these global permissions. Secure Input, revoked permissions and unknown or expired contexts stop global classification; no events alone do not prove that you were idle.
+
+### Updates
+
+Choose **Check for Updates…** in the app menu or Settings to check manually, then use the update window to download and install. Settings also controls automatic update checks and automatic download/install on quit. Sparkle checks a public HTTPS appcast and verifies Ed25519 signatures for the feed and update archive before installation; it does not upload typing statistics. A final relaunch may be needed to finish an update.
+
+The 1.1.1 app does not contain an updater; install the first updater-enabled release manually once. Updates do not grant privacy permissions, bypass macOS approval or convert global Chinese keystrokes into confirmed CPM. Certificate signing and download signatures protect different parts of the update process. See [release instructions](docs/RELEASING.md) for publisher setup and known signing limits.
 
 ## Build and test
 
@@ -94,7 +101,7 @@ The no-space/candidate-estimate counting policy applies to new input. Existing a
 
 ## Privacy and storage
 
-The app has no network service and stores local aggregates. It does not save typed text, reconstructable key sequences, clipboard contents, document contents, window titles or URLs. The confirmed editor briefly counts text in its insertion callback, then passes only counts and coverage metadata to statistics.
+Typing statistics stay local. The updater can contact GitHub/raw.githubusercontent.com and GitHub release-download servers to check and download releases; those requests do not include typing aggregates or input content. Automatic checks can be disabled in Settings. It does not save typed text, reconstructable key sequences, clipboard contents, document contents, window titles or URLs. The confirmed editor briefly counts text in its insertion callback, then passes only counts and coverage metadata to statistics.
 
 - Database: `~/Library/Application Support/TypingSpeed/statistics.sqlite`
 - Preferences: `~/Library/Preferences/local.benjamin.TypingSpeed.plist`
@@ -110,4 +117,4 @@ Keyboard callbacks use a fixed-capacity buffer. Accessibility work runs outside 
 
 ## License
 
-[MIT](LICENSE). You may use, modify and redistribute Keytempo, including commercially, while retaining the copyright and permission notice required by that license. There is no additional project-specific field-of-use restriction. See [Resources/ICON.md](Resources/ICON.md) for the app icon's provenance.
+[MIT](LICENSE). You may use, modify and redistribute Keytempo, including commercially, while retaining the copyright and permission notice required by that license. There is no additional project-specific field-of-use restriction. Third-party notices are in [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md); see [Resources/ICON.md](Resources/ICON.md) for the app icon's provenance.

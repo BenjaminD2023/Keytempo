@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.0 — 2026-10-22
+
+- Add Sparkle 2.10.0 update checks, manual download/install and optional automatic checks/downloads.
+- Require Ed25519 signatures for the update feed and archives; keep private update and certificate keys in the maintainer's local Keychain.
+- Use a stable local Apple Development signing identity for maintainer builds instead of a changing ad-hoc binary identity. Migration needs one new grant; actual TCC retention still requires a human-authorized upgrade check.
+- Publish locally signed releases through an explicit preparation/publication script; CI validates tags without publishing temporary ad-hoc builds to the stable update channel.
+- Preserve existing history, privacy filters, input language settings and statistics definitions.
+
 ## 1.1.1 — 2026-10-22
 
 - Add 90-day, one-year and five-year history ranges with on-demand database loading and daily/weekly/monthly aggregation.

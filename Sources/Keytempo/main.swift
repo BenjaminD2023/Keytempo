@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import TypingCore
 
-@MainActor final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverDelegate {
+@MainActor final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverDelegate, NSMenuItemValidation {
     private var statusItem: NSStatusItem!
     private var popover = NSPopover()
     private var model: AppModel!
@@ -17,6 +17,8 @@ import TypingCore
         }
         installApplicationMenu()
         model = AppModel()
+        model.updates.beforeInstall = { [weak self] in self?.model.flush() }
+        model.updates.start()
         model.openStats = { [weak self] in self?.showStatistics() }
         model.openSettings = { [weak self] in self?.showSettings() }
         model.onMenuUpdate = { [weak self] in self?.updateMenu() }
@@ -40,6 +42,8 @@ import TypingCore
         let applicationItem = NSMenuItem(); let applicationMenu = NSMenu(title: "Keytempo")
         let settingsItem = applicationMenu.addItem(withTitle: L("设置…"), action: #selector(showSettings), keyEquivalent: ",")
         settingsItem.target = self
+        let updatesItem = applicationMenu.addItem(withTitle: L("检查更新…"), action: #selector(checkForUpdates), keyEquivalent: "")
+        updatesItem.target = self
         applicationMenu.addItem(.separator())
         applicationMenu.addItem(withTitle: L("退出 Keytempo"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         applicationItem.submenu = applicationMenu; menu.addItem(applicationItem)
@@ -56,6 +60,10 @@ import TypingCore
         windowMenu.addItem(withTitle: L("关闭窗口"), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         windowItem.submenu = windowMenu; menu.addItem(windowItem)
         NSApp.mainMenu = menu; NSApp.windowsMenu = windowMenu
+    }
+    @objc private func checkForUpdates() { model?.updates.checkForUpdates() }
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        menuItem.action == #selector(checkForUpdates) ? (model?.updates.canCheckForUpdates ?? false) : true
     }
     private func updateMenu() {
         guard let statusItem else { return }

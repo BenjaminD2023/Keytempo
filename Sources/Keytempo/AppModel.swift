@@ -131,6 +131,7 @@ struct HistoryDay: Identifiable {
     var openStats: (() -> Void)?, openSettings: (() -> Void)?
     var statisticsVisible = false
     var historyVisible = false
+    let updates = AppUpdater()
     let monitor = InputMonitor()
     private var consumedCompletionRevision: UInt64 = 0
     private var engine: StatisticsEngine

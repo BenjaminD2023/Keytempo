@@ -10,3 +10,11 @@ artifacts/
 *.xcuserstate
 xcuserdata/
 .vscode/
+__pycache__/
+*.pyc
+*.key
+*.p8
+*.p12
+*.pfx
+*.pem
+*.keychain*

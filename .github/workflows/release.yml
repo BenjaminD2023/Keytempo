@@ -1,4 +1,4 @@
-name: Release
+name: Release validation
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing release tag, matching Info.plist (for example v1.1.1)
+        description: Existing release tag, matching Info.plist (for example v1.2.0)
         required: true
         type: string
 
@@ -18,11 +18,9 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
+  validate:
     runs-on: macos-15
     timeout-minutes: 25
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -49,7 +47,7 @@ jobs:
           print "version=$app_version" >> "$GITHUB_OUTPUT"
       - name: Unit tests, Release build and native integration checks
         run: ./scripts/test.sh
-      - name: Source archive and checksums
+      - name: Validate source packaging and architecture
         shell: zsh {0}
         env:
           APP_VERSION: ${{ steps.version.outputs.version }}
@@ -61,27 +59,22 @@ jobs:
             print -u2 "This release job expects an Apple Silicon runner; got $binary_architecture"
             exit 1
           fi
-          cd dist
-          shasum -a 256 "Keytempo-${APP_VERSION}-macos-arm64.zip" "Keytempo-${APP_VERSION}-source.zip" > SHA256SUMS
-      - name: Publish GitHub Release
+      - name: Local publication required
         shell: zsh {0}
         env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-          APP_VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          notes_file="$RUNNER_TEMP/keytempo-release-notes.md"
-          cat > "$notes_file" <<'NOTES'
-          Apple Silicon (arm64), macOS 13 or later. The app is ad hoc signed and is not notarized with Apple. Source and build instructions are included in the repository.
+          cat >> "$GITHUB_STEP_SUMMARY" <<NOTES
+          ## Validated $RELEASE_TAG
 
-          Input Monitoring and Accessibility permissions must be granted by the user. Updates may require permission renewal. Global typing statistics are estimates; global Chinese CPM is unavailable without a commit adapter.
+          Tests, compilation, integration checks and source packaging passed.
 
-          Verify downloads against SHA256SUMS. The app includes the MIT copyright and license notice in Contents/Resources.
+          This runner has no stable publisher certificate or Sparkle private key.
+          Its temporary ad-hoc build is deliberately **not published** to the update channel.
 
+          On the maintainer Mac, follow docs/RELEASING.md and run
+          scripts/publish-release.sh --prepare, review the result, then run
+          scripts/publish-release.sh --publish. Commit and push the resulting signed appcast.xml.
+          Private keys stay in the local Keychain; no private certificate is exported to GitHub.
           NOTES
-          cat CHANGELOG.md >> "$notes_file"
-          assets=("dist/Keytempo-${APP_VERSION}-macos-arm64.zip" "dist/Keytempo-${APP_VERSION}-source.zip" "dist/SHA256SUMS")
-          # Fail on an existing release rather than silently replacing published binaries.
-          gh release create "$RELEASE_TAG" "${assets[@]}" --verify-tag --title "Keytempo $APP_VERSION" --notes-file "$notes_file"

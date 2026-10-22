@@ -18,4 +18,8 @@ Keytempo passively observes keyboard metadata and queries focused-control metada
 
 Confirmed character coverage currently applies only to the built-in validation editor. Global estimates must not be presented as confirmed input or used as proof of a person's activity or inactivity.
 
-Published apps are currently ad hoc signed and are not notarized. A checksum detects a mismatched download but is not a substitute for publisher identity verification. Never grant permissions to an unrelated app solely because its display name is Keytempo.
+Maintainer builds now use a stable local Apple Development code-signing identity; they are not Developer ID distribution or notarized. Earlier 1.1.1 releases were ad hoc signed. A migration between these identities needs a new permission grant; signature checks do not prove that macOS retained a human authorization. Never grant permissions to an unrelated app solely because its display name is Keytempo.
+
+Sparkle 2.10.0 verifies Ed25519 signatures for update archives and the appcast feed using the public key embedded in the app. Both the certificate private key and Sparkle private key remain in the maintainer's local Keychain; CI performs validation without publishing its ad-hoc artifact. The local publisher refuses changes to the established feed's signing team, channel, designated-requirement digest or update public key. Checksums are supplementary integrity checks, not a replacement for these signatures.
+
+Update checks contact the public GitHub feed/download service without typing content or aggregates. Automatic checks/downloads can be disabled in Settings. An update never authorizes Input Monitoring or Accessibility on behalf of the user, edits system permission databases, or bypasses Secure Input.

@@ -1,61 +1,76 @@
 # Releasing Keytempo
 
-Release from a reviewed commit on the default branch. Do not publish local typing data, diagnostics, credentials or signing material.
+Build and publish from a reviewed commit on the maintainer Mac. Never publish local typing data, diagnostics, credentials or private signing material.
+
+## Signing and permission continuity
+
+The former ad-hoc signature used a per-binary code hash as its designated requirement. A changed binary therefore looked like a different application to macOS privacy authorization. Keytempo now supports a stable local certificate identity while preserving `local.benjamin.TypingSpeed` and the installed application path.
+
+A local build selects an available Apple Development identity, or the identity explicitly configured through `KEYTEMPO_SIGNING_IDENTITY`. The build records the source commit, clean-tree state and signing channel in the final app metadata. Verify the selected identity rather than assuming that a successful build is certificate signed. CI machines without that identity may build ad-hoc test artifacts; those artifacts **must not be published to the stable update feed**.
+
+The current maintainer release channel uses a local Apple Development certificate. It is **not Developer ID distribution and is not notarized**. It does not eliminate Gatekeeper first-launch approval. Migrating from the old ad-hoc app requires one new authorization; keeping the new identity stable addresses the cause of repeated grants, but actual Input Monitoring/Accessibility retention across a human-authorized update still needs to be verified. Do not claim that signature checks alone prove the TCC result.
+
+Do not export the existing certificate/private key to GitHub. Do not weaken code requirements to an identifier-only expression, modify the TCC database, install system trust overrides or remove quarantine attributes as a workaround.
+
+For future Developer ID distribution, use a Developer ID Application certificate, sign nested components inside-out, notarize and staple the final app, and verify that artifact. Changing signing channels is an explicit migration: the publisher refuses to silently replace the feed's signing team, channel, designated-requirement digest or Sparkle public key.
+
+Apple's explanation: [TN3127: Code signing requirements](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements), [Developer ID distribution](https://developer.apple.com/developer-id/).
+
+## One-time update key setup
+
+Sparkle 2.10.0 is pinned in the package dependency. After resolving/building it, its tools are in `.build/artifacts/sparkle/Sparkle/bin/`. The project-specific Ed25519 key lives in the local macOS Keychain under account `local.benjamin.Keytempo.updates`.
+
+```sh
+.build/artifacts/sparkle/Sparkle/bin/generate_keys --account local.benjamin.Keytempo.updates
+```
+
+The first command creates a key only when one does not exist, otherwise reuses it. Put the **public** `SUPublicEDKey` value in `Resources/Info.plist`. Never put a private key in source, environment examples, app resources, archives or CI secrets. Do not generate a new key for every release. If Keychain asks to allow the signing tool, the maintainer must approve that local key use. Keep an independent secure recovery plan for the signing keys; losing either identity requires a separately planned migration.
+
+The feed is `https://raw.githubusercontent.com/BenjaminD2023/Keytempo/main/appcast.xml`. Both archives and appcast XML are signed with Sparkle's official signing tool. The app requires a signed feed, and the publisher compares the Keychain public key with the key embedded in the app.
 
 ## Prepare a version
 
-1. Update `CFBundleShortVersionString` and increment `CFBundleVersion` in `Resources/Info.plist`.
-2. Add the concrete user-facing changes to `CHANGELOG.md`.
-3. Run `./scripts/test.sh` on a Mac and review the resulting app. The script checks core/store tests, Release compilation, signing and isolated integration checks; it does not replace physical-input validation in other applications.
-4. Check current language switching, WPM/CPM availability, KPM selection, permissions and preservation of existing data. Label remaining unsupported cases in release notes.
-
-## Publish through GitHub Actions
-
-The [release workflow](../.github/workflows/release.yml) runs for pushed `v*` tags or a manual workflow dispatch with a tag. It checks that the tag exactly matches `v` plus the app's short version, runs the tests/build, packages an allowlisted source archive and publishes a GitHub Release.
-
-After committing and pushing the reviewed source, publish a version tag:
+1. Update `CFBundleShortVersionString` and increment integer `CFBundleVersion` in `Resources/Info.plist`.
+2. Add concrete changes and limitations to `CHANGELOG.md`.
+3. Run `./scripts/test.sh` on a Mac. This checks core/store tests, update-feed fixtures, Release compilation, signing and isolated native integration checks. It does not replace physical-input or TCC validation.
+4. Review the app: current WPM/CPM, KPM, language settings, history, permissions, update controls and data preservation.
+5. Commit and push the reviewed source. Tag that exact commit as `v` plus the short version, then push the tag.
+6. Wait for the [CI and release-validation workflows](https://github.com/BenjaminD2023/Keytempo/actions) to pass. The tag workflow validates and packages but does not publish its ad-hoc app.
+7. Build again from the committed, clean source so the app's recorded commit matches the tag:
 
 ```sh
-git tag v1.1.1
-git push origin v1.1.1
+./scripts/build.sh
+./scripts/publish-release.sh --prepare
 ```
 
-Review the resulting [Actions run](https://github.com/BenjaminD2023/Keytempo/actions) and [Release](https://github.com/BenjaminD2023/Keytempo/releases). Do not manually create a competing release while the tag workflow is publishing.
+`--prepare` is the default. It performs no GitHub mutation, exports no private key and does not modify the tracked feed. It requires a certificate-signed arm64 app, matching version/build/tag/source commit, a clean source tree (including nonignored untracked files), a stable designated requirement and the correct local Sparkle key. Existing feed entries are validated, their signed XML is verified, and publisher identity changes are rejected. An already installed certificate-signed Keytempo must recognize the new app's code identity too.
 
-For version 1.1.1 on the arm64 runner, the release assets are:
+The script repackages the final signed app, creates the allowlisted source archive, signs and verifies the app archive, creates a feed preview retaining at most 20 releases, signs/verifies the XML, and writes `SHA256SUMS` into `dist/`.
 
-- `Keytempo-1.1.1-macos-arm64.zip`
-- `Keytempo-1.1.1-source.zip`
-- `SHA256SUMS`
+For a nonstandard local Sparkle-tool location, set `KEYTEMPO_SPARKLE_BIN` to the verified 2.10.0 `bin` directory. Do not use an unverified signing executable with the project key.
 
-Asset versions are derived from the app metadata; architecture is derived from the actual binary, rather than inferred from a runner label. A locally built Intel binary gets an Intel architecture label. This does not imply that Intel execution has been tested.
+## Publish reviewed assets
 
-## Reproduce packaging locally
-
-From a clean repository checkout:
+After reviewing the prepared assets and successful checks:
 
 ```sh
-./scripts/test.sh
-./scripts/package-source.sh
+./scripts/publish-release.sh --publish
 ```
 
-The app, versioned archives and compatibility archives `Keytempo-macOS.zip` / `Keytempo-source.zip` appear in `dist/`. Before publishing, verify app metadata and signing:
+This explicitly creates a draft GitHub Release containing the versioned arm64 app ZIP, source ZIP and `SHA256SUMS`, then publishes it. It refuses an existing release and never overwrites published binaries. A failure before publication may leave a draft to inspect rather than silently retrying a conflicting release.
+
+After publication, the script copies the signed feed preview to the tracked `appcast.xml`. Review that change, commit it and push to `main`:
 
 ```sh
-plutil -lint dist/Keytempo.app/Contents/Info.plist
-codesign --verify --strict dist/Keytempo.app
+git add appcast.xml
+git commit -m 'Publish signed update feed'
+git push origin main
 ```
 
-Include the source license and required notices in redistributed source or binaries. Keep generated files outside the tracked source tree. Never package a developer's whole working directory: use the source-packaging script's explicit source-file allowlist.
+Publishing the feed last prevents updaters from discovering an asset that has not been uploaded. Do not modify signed XML by hand; regenerate and re-sign it. Verify the public release downloads against `SHA256SUMS`, then check for updates from the installed app. Test installation/relaunch using a newer signed build while preserving the same code identity and user database; record the actual result and any remaining manual checks.
 
-## Release notes and signing
+## Distribution boundaries
 
-State the version/build, supported deployment target and asset architectures. Describe actual checks and their limits. In particular:
+Current automatic-update assets are Apple Silicon (`arm64`), macOS 13 or later. Intel execution has not been validated and is not included in this feed. App and framework notices are included in the bundle; the source archive uses an explicit file allowlist and excludes local databases, diagnostics and signing files.
 
-- Current app signing is ad hoc, without Developer ID signing or notarization.
-- A replacement binary may need Input Monitoring and Accessibility permissions to be granted again.
-- Global input is an estimate; global Chinese character CPM is unavailable.
-- Successful unit tests do not prove complete input coverage in WeChat, ChatGPT, games, Vim or custom editors.
-- CPU-attributed energy measurements do not establish whole-device incremental battery power below 1 W.
-
-If Developer ID signing is added later, store credentials in restricted CI secrets, sign the final bundle, notarize it, staple the ticket and verify that final artifact. Do not describe this as implemented until the published artifact has passed those steps.
+Release notes must distinguish estimated global input from confirmed editor input, identify unavailable global Chinese CPM and report the real validation scope. CPU-attributed energy measurements do not establish a whole-device incremental battery target below 1 W. Changes to statistics rules or unsupported input paths must not be hidden by update packaging.

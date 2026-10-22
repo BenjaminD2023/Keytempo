@@ -124,6 +124,7 @@ struct MenuContent: View {
             HStack {
                 Button(L("设置…"), action: model.showSettings)
                     .keyboardShortcut(",", modifiers: .command)
+                CheckForUpdatesButton(updater: model.updates)
                 Spacer()
                 Button(L("退出")) { NSApplication.shared.terminate(nil) }
                     .keyboardShortcut("q", modifiers: .command)
@@ -694,6 +695,7 @@ struct SettingsView: View {
                     Button(model.isPaused ? L("恢复统计") : L("暂停统计"), action: model.togglePause)
                 }
             }
+            UpdateSettingsSection(updater: model.updates)
             Section(L("段落识别")) {
                 Picker(L("连续间隔上限"), selection: $model.maximumGap) {
                     Text(L("2 秒 · 较紧凑")).tag(2.0)
@@ -781,6 +783,47 @@ struct SettingsView: View {
         if !existing.contains(bundle) {
             model.excludedAppsText += (model.excludedAppsText.isEmpty ? "" : "\n") + bundle
             model.applySettings()
+        }
+    }
+}
+
+private struct CheckForUpdatesButton: View {
+    @ObservedObject var updater: AppUpdater
+    var body: some View {
+        Button(L("检查更新…"), action: updater.checkForUpdates)
+            .disabled(!updater.canCheckForUpdates)
+    }
+}
+
+private struct UpdateSettingsSection: View {
+    @ObservedObject var updater: AppUpdater
+    var body: some View {
+        Section(L("软件更新")) {
+            HStack {
+                Text(L("当前版本 %@", updater.version))
+                Spacer()
+                CheckForUpdatesButton(updater: updater)
+            }
+            Toggle(L("自动检查更新"), isOn: Binding(get: { updater.automaticallyChecks }, set: updater.setAutomaticallyChecks))
+            Toggle(L("自动下载并在退出时安装"), isOn: Binding(get: { updater.automaticallyDownloads }, set: updater.setAutomaticallyDownloads))
+                .disabled(!updater.allowsAutomaticDownloads)
+            Text(L("自动检查约每 24 小时一次。关闭自动下载后，可通过“检查更新”手动下载并安装。更新不会上传输入统计。"))
+                .font(.caption).foregroundStyle(.secondary)
+            if let lastCheck = updater.lastCheck {
+                Text(L("上次检查：%@", lastCheck.formatted(date: .abbreviated, time: .shortened)))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if let error = updater.startupError {
+                Label(L("更新暂不可用：%@", error), systemImage: "exclamationmark.triangle")
+                    .font(.caption).foregroundStyle(.orange)
+            }
+            if updater.signingChannel == "adhoc" {
+                Text(L("此版本使用临时签名，更新后可能需要重新授权系统权限。"))
+                    .font(.caption).foregroundStyle(.orange)
+            } else if updater.signingChannel == "local-development" {
+                Text(L("本地开发签名：后续更新须保持相同签名身份。首次从临时签名迁移后需重新授权一次。"))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
     }
 }

@@ -38,6 +38,16 @@ enum AppLanguage {
     ]
 
     private static let english: [String: String] = [
+        "软件更新": "Software updates",
+        "检查更新…": "Check for Updates…",
+        "当前版本 %@": "Current version %@",
+        "自动检查更新": "Automatically check for updates",
+        "自动下载并在退出时安装": "Automatically download and install on quit",
+        "自动检查约每 24 小时一次。关闭自动下载后，可通过“检查更新”手动下载并安装。更新不会上传输入统计。": "Checks about every 24 hours. With automatic downloads off, use Check for Updates to download and install manually. Updates do not upload typing statistics.",
+        "上次检查：%@": "Last checked: %@",
+        "更新暂不可用：%@": "Updates unavailable: %@",
+        "此版本使用临时签名，更新后可能需要重新授权系统权限。": "This build uses an ad hoc signature; updates may require renewed system permissions.",
+        "本地开发签名：后续更新须保持相同签名身份。首次从临时签名迁移后需重新授权一次。": "Local development signature: future updates must keep the same signing identity. The first migration from an ad hoc signature needs a new permission grant.",
         "今天": "Today",
         "%@ 至 %@": "%@ to %@",
         "正在读取历史…": "Loading history…",
