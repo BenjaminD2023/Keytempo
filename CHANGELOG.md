@@ -15,10 +15,28 @@ The project changed its public version convention before the `0.3.0` release. Hi
 | 0.3.0 | 0.3.0 / `v0.3.0` | 11 | First release with the normalized app version |
 | 0.3.1 | 0.3.1 / `v0.3.1` | 14 | Chinese input recovery and hybrid menu display |
 | 0.3.2 | 0.3.2 / `v0.3.2` | 15 | Combined language metrics and clearer menu behavior |
+| 0.4.0 | 0.4.0 / `v0.4.0` | 16 | Local activity timeline, sessions and multi-factor practice score |
 
 Already published signed archives, source tags and download URLs retain their original `1.x` identifiers. Their changelog labels are normalized; their embedded app versions have not been rewritten. New releases use `0.x` app versions and tags. The internal build number continues increasing, so Sparkle can offer `0.3.0` (build 11) to apps displaying `1.2.0` (build 9) or `1.2.1` (build 10).
 
 ## [Unreleased]
+
+## [0.4.0] - 2026-10-23
+
+### Added
+
+- Add a local hourly activity timeline with accepted keystrokes, actual typing duration and weighted estimated WPM. Intervals crossing an hour or day are divided proportionally, including their rate numerator and timing moments; repeated daylight-saving hours remain distinct.
+- Automatically summarize input sessions with average WPM, consistency, score, typing duration and keystroke count. A five-minute gap between accepted events, or a pause, sleep, quit, day, timezone or counting-rule boundary, ends the session at its last accepted event. Elapsed span and actual typing time are shown separately.
+- Add optional per-app activity, off by default. Only application bundle identifiers and aggregates are stored locally. Disabling it stops new app-specific collection; a separate confirmed action clears app details while keeping combined totals and session summaries.
+- Show rhythm consistency from aggregate accepted-interval timing moments, using `100 / (1 + coefficient of variation)`. No input text, key sequence or individual interval sequence is saved.
+- Add Typing Score and a 30-day score trend. Four equally weighted components reward speed, consistency, actual typing time and keystroke volume. Speed, time and volume reach their respective component caps at 100 estimated WPM, 30 typing minutes and 10,000 keystrokes; consistency and scoring require at least 20 accepted intervals and two seconds of actual typing.
+
+### Changed
+
+- Add an Activity page and additive local database tables without rewriting existing daily history. Hourly, session, per-app and score details begin with 0.4.0 recording; old daily totals cannot reconstruct them.
+- Retain combined input languages, existing text-context and shortcut filtering, and separate KPM. The confirmed validation editor is excluded from these everyday activity analytics.
+
+Typing Score is an explainable personal practice index, not a standardized skill test, accuracy measure or actual word/Chinese-character output rate. Its fixed references are product heuristics, not population norms. Daily rates, consistency and scores are recomputed from summed interval counts, durations and timing moments, rather than averaged hourly/session scores. Incompatible counting methods are identified rather than silently mixed. Idle waiting adds neither typing time nor score.
 
 ## [0.3.2] - 2026-10-23
 
@@ -154,7 +172,8 @@ Originally local `1.1.0` builds; no separate public release archive was publishe
 - Separate global estimates from a real confirmed editor adapter, with adaptive segment timing and local aggregate storage.
 - Establish core, persistence and application integration tests and document the limits of real-world input and resource validation.
 
-[Unreleased]: https://github.com/BenjaminD2023/Keytempo/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/BenjaminD2023/Keytempo/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/BenjaminD2023/Keytempo/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/BenjaminD2023/Keytempo/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/BenjaminD2023/Keytempo/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/BenjaminD2023/Keytempo/compare/v1.2.1...v0.3.0

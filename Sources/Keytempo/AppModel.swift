@@ -144,6 +144,17 @@ struct HistoryDay: Identifiable {
     @Published private(set) var todayAverageWPM: Double?
     @Published private(set) var todayAverageIsPartial = false
     @Published private(set) var todayAverageCoveredKeys = 0
+    @Published private(set) var activityHourly: [HourlyActivity] = []
+    @Published private(set) var activitySessions: [TypingSession] = []
+    @Published private(set) var activityScoreDays: [ActivityScoreDay] = []
+    @Published private(set) var activityLoading = false
+    @Published private(set) var activityError: String?
+    @Published private(set) var activityActionError: String?
+    @Published private(set) var activityCoverageStart: Date?
+    @Published var activityDate = Date()
+    @Published private(set) var perAppTrackingEnabled = UserDefaults.standard.bool(forKey: "perAppTrackingEnabled")
+    var activityVisible = false
+    var activityCurrentRule: String { engine.config.ruleID }
     @Published private(set) var completedPrimaryMetric: CompletedMenuMetric?
     @Published private(set) var completedKPMMetric: CompletedMenuMetric?
     @Published private(set) var completionPending = false
@@ -262,6 +273,19 @@ struct HistoryDay: Identifiable {
     private var historyReadToken: UInt64 = 0
     private var activeHistoryRead: HistoryReadRequest?
     private var pendingHistoryRead: HistoryReadRequest?
+    private var activityTracker = ActivityTracker()
+    private var pendingActivity = ActivityBuffer()
+    private var inFlightActivity = ActivityBatch()
+    private var activityReadOverlay = ActivityBuffer()
+    private var activityLoadedHourly: [String: HourlyActivity] = [:]
+    private var activityLoadedSessions: [String: TypingSession] = [:]
+    private var activityReadInFlight = false
+    private var activityReadRequested = false
+    private var activityReadToken: UInt64 = 0
+    private var activitySessionWork: DispatchWorkItem?
+    private var activitySessionDeadline: Double?
+    private var appNameCache: [String: String] = [:]
+    private var clearingAppActivity = false
 
     static func rule(_ maximum: Double, suspectedInputFiltering: Bool = true, chineseKeyboardCompatibility: Bool = false) -> String {
         "adaptive-v4-no-space-ime-quality-" + (suspectedInputFiltering ? "on" : "off") + "-max" + String(format: "%.1f", maximum) + (chineseKeyboardCompatibility ? "-ime-fallback" : "")
@@ -270,8 +294,9 @@ struct HistoryDay: Identifiable {
         let c = Calendar.current.dateComponents([.year, .month, .day], from: date)
         return String(format: "%04d-%02d-%02d", c.year!, c.month!, c.day!)
     }
-    init(dataDirectory: URL? = nil, monitoringEnabled: Bool = true) {
+    init(dataDirectory: URL? = nil, monitoringEnabled: Bool = true, perAppTracking: Bool? = nil) {
         self.monitoringEnabled = monitoringEnabled
+        if let perAppTracking { perAppTrackingEnabled = perAppTracking }
         let gap = UserDefaults.standard.object(forKey: "maximumGap") as? Double ?? 3
         let filterSuspected = UserDefaults.standard.object(forKey: "suspectedInputFilteringEnabled") as? Bool ?? true
         let chineseCompatibility = UserDefaults.standard.bool(forKey: "chineseKeyboardCompatibilityEnabled")
@@ -313,7 +338,7 @@ struct HistoryDay: Identifiable {
         let center = NSWorkspace.shared.notificationCenter
         observers.append(center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self else { return }; self.monitor.flushPendingInput(); self.sleeping = true; self.interruptEngine(); self.monitor.stop(); self.flush(); self.status = "系统睡眠，统计已中断"; self.stopUI(); self.resetTenMinuteWindow()
+                guard let self else { return }; self.monitor.flushPendingInput(); self.finishActivitySession("sleep"); self.sleeping = true; self.interruptEngine(); self.monitor.stop(); self.flush(); self.status = "系统睡眠，统计已中断"; self.stopUI(); self.resetTenMinuteWindow()
             }
         })
         observers.append(center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
@@ -322,7 +347,13 @@ struct HistoryDay: Identifiable {
             }
         })
         observers.append(NotificationCenter.default.addObserver(forName: NSNotification.Name.NSSystemTimeZoneDidChange, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.monitor.flushPendingInput(); self?.engine.updateTimeZone(.current); self?.refreshSnapshot() }
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.monitor.flushPendingInput()
+                self.accumulateActivity(self.activityTracker.setTimeZone(.current))
+                self.engine.updateTimeZone(.current); self.refreshSnapshot()
+                if self.activityVisible { self.loadActivity(day: self.activityDate) }
+            }
         })
         if !isPaused && monitoringEnabled { monitor.start() } else { status = "已暂停" }
         refreshSnapshot()
@@ -343,6 +374,14 @@ struct HistoryDay: Identifiable {
         if let last = lastEstimatedInputTime, input.time < last { resetTenMinuteWindow() }
         let result = engine.recordWithIntervals(input)
         let deltas = result.deltas
+        let activity = activityTracker.record(input: input, result: result, rule: engine.config.ruleID,
+                                             applicationID: input.applicationID,
+                                             perAppEnabled: perAppTrackingEnabled && !clearingAppActivity)
+        accumulateActivity(activity)
+        if input.source == .global && input.evidence == .probable && deltas.contains(where: { $0.keys > 0 }) {
+            activitySessionDeadline = input.time + 300
+            scheduleActivitySessionEnd()
+        }
         tenMinuteWindow.record(result.acceptedIntervals, at: input.time)
         captureCompletion()
         if input.category.isEffective && input.evidence != .unknown {
@@ -419,14 +458,178 @@ struct HistoryDay: Identifiable {
         let work = DispatchWorkItem { [weak self] in self?.saveWork = nil; self?.flush() }
         saveWork = work; DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
+    private func accumulateActivity(_ batch: ActivityBatch) {
+        guard !batch.isEmpty else { return }
+        pendingActivity.merge(batch)
+        // The read is queued before later writes. Its overlay starts with the
+        // unsaved batch and receives each later delta once, even if it saves.
+        if activityReadInFlight { activityReadOverlay.merge(batch) }
+        if activityVisible && !activityLoading && activityError == nil { mergeLoadedActivity(batch) }
+        if pendingActivity.count >= 512 { flush() }
+        if pendingActivity.count > 1024 {
+            isPaused = true; monitor.stop(); interruptEngine()
+            storageError = "待保存汇总达到容量上限，已暂停；请解决磁盘问题后重试。"
+        }
+        if saveWork == nil && retryCount == 0 { scheduleSave(after: 30) }
+    }
+    private func scheduleActivitySessionEnd() {
+        guard activitySessionWork == nil, let deadline = activitySessionDeadline else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.activitySessionWork = nil
+            guard let deadline = self.activitySessionDeadline else { return }
+            if ProcessInfo.processInfo.systemUptime < deadline { self.scheduleActivitySessionEnd(); return }
+            self.finishActivitySession("idle")
+            self.publishActivitySnapshot()
+        }
+        activitySessionWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0.01, deadline - ProcessInfo.processInfo.systemUptime), execute: work)
+    }
+    private func finishActivitySession(_ reason: String) {
+        activitySessionWork?.cancel(); activitySessionWork = nil; activitySessionDeadline = nil
+        accumulateActivity(activityTracker.finish(reason: reason))
+    }
+    func loadActivity(day: Date) {
+        let selection = Calendar.current.startOfDay(for: day)
+        activityDate = selection; activityVisible = true
+        activityReadToken &+= 1; activityReadRequested = true
+        activityLoading = true; activityError = nil
+        activityHourly.removeAll(); activitySessions.removeAll(); activityScoreDays.removeAll()
+        startActivityReadIfPossible()
+    }
+    func releaseActivity() {
+        activityVisible = false; activityReadToken &+= 1; activityReadRequested = false
+        activityLoading = false; activityError = nil
+        activityLoadedHourly.removeAll(); activityLoadedSessions.removeAll()
+        activityHourly.removeAll(); activitySessions.removeAll(); activityScoreDays.removeAll()
+        appNameCache.removeAll()
+    }
+    private func startActivityReadIfPossible() {
+        if activityVisible && activityReadRequested && store == nil {
+            activityLoading = false
+            activityError = storageError ?? "SQLite unavailable"
+            return
+        }
+        guard activityVisible, activityReadRequested, !activityReadInFlight,
+              !clearing, !clearingAppActivity, activeReceipt == nil, let store else { return }
+        let calendar = Calendar.current, day = calendar.startOfDay(for: activityDate)
+        guard let end = calendar.date(byAdding: .day, value: 1, to: day),
+              let start = calendar.date(byAdding: .day, value: -29, to: day) else { return }
+        let token = activityReadToken, version = generation, applications = perAppTrackingEnabled
+        activityReadRequested = false; activityReadInFlight = true
+        activityReadOverlay = pendingActivity
+        diskQueue.async { [weak self] in
+            let result = Result { () -> ([HourlyActivity], [TypingSession], Date?) in
+                var hours = try store.queryHourly(since: start, until: end)
+                if applications { hours += try store.queryHourly(since: day, until: end, includeApplications: true) }
+                return (hours, try store.querySessions(since: day, until: end), try store.activityCoverageStart())
+            }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.activityReadInFlight = false
+                if self.activityVisible && !self.clearing && !self.clearingAppActivity &&
+                    version == self.generation && token == self.activityReadToken && applications == self.perAppTrackingEnabled {
+                    switch result {
+                    case let .success((hours, sessions, coverage)):
+                        self.activityLoadedHourly = Dictionary(hours.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+                        self.activityLoadedSessions = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+                        self.mergeLoadedActivity(self.activityReadOverlay.batch)
+                        self.activityCoverageStart = coverage ?? self.activityLoadedHourly.values.map(\.bucketStart).min()
+                        self.activityError = nil
+                    case let .failure(error):
+                        self.activityLoadedHourly.removeAll(); self.activityLoadedSessions.removeAll()
+                        self.activityError = error.localizedDescription
+                    }
+                    self.activityLoading = false
+                    self.publishActivitySnapshot()
+                }
+                self.activityReadOverlay.removeAll()
+                self.startActivityReadIfPossible()
+            }
+        }
+    }
+    private func mergeLoadedActivity(_ batch: ActivityBatch) {
+        let calendar = Calendar.current, day = calendar.startOfDay(for: activityDate)
+        guard let start = calendar.date(byAdding: .day, value: -29, to: day),
+              let end = calendar.date(byAdding: .day, value: 1, to: day) else { return }
+        var buffer = ActivityBuffer(hourly: activityLoadedHourly, sessions: activityLoadedSessions)
+        buffer.merge(ActivityBatch(hourly: batch.hourly.filter {
+            $0.bucketStart >= start && $0.bucketStart < end &&
+            ($0.applicationID.isEmpty || (perAppTrackingEnabled && !clearingAppActivity && $0.bucketStart >= day))
+        }, sessions: batch.sessions.filter { ($0.end > day || ($0.start == $0.end && $0.start >= day)) && $0.start < end }))
+        activityLoadedHourly = buffer.hourly; activityLoadedSessions = buffer.sessions
+    }
+    private func publishActivitySnapshot() {
+        guard activityVisible, !activityLoading, activityError == nil else { return }
+        let calendar = Calendar.current, day = calendar.startOfDay(for: activityDate)
+        guard let end = calendar.date(byAdding: .day, value: 1, to: day) else { return }
+        let hours = activityLoadedHourly.values.filter {
+            $0.bucketStart >= day && $0.bucketStart < end &&
+            ($0.applicationID.isEmpty || (perAppTrackingEnabled && !clearingAppActivity))
+        }.sorted { $0.id < $1.id }
+        let sessions = activityLoadedSessions.values.filter { ($0.end > day || ($0.start == $0.end && $0.start >= day)) && $0.start < end }.sorted { $0.start > $1.start }
+        let grouped = Dictionary(grouping: activityLoadedHourly.values.filter { $0.applicationID.isEmpty }, by: { calendar.startOfDay(for: $0.bucketStart) })
+        let scores = grouped.keys.sorted().map { date in
+            let rows = grouped[date]!
+            var totals = RhythmTotals(); for row in rows { totals.merge(row.totals) }
+            return ActivityScoreDay(day: date, totals: totals, hasMixedRules: Set(rows.map(\.rule)).count > 1)
+        }
+        if activityHourly != hours { activityHourly = hours }
+        if activitySessions != sessions { activitySessions = sessions }
+        if activityScoreDays != scores { activityScoreDays = scores }
+    }
+    func setPerAppTracking(_ enabled: Bool) {
+        guard enabled != perAppTrackingEnabled else { return }
+        monitor.flushPendingInput()
+        activityTracker.resetApplicationAttribution()
+        perAppTrackingEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: "perAppTrackingEnabled")
+        if activityVisible { loadActivity(day: activityDate) }
+    }
+    /// The view confirms deletion. Combined hours, sessions and daily history
+    /// remain intact; a serial clear follows any already captured transaction.
+    func clearAppActivity() {
+        guard !clearingAppActivity, !clearing, let store else { return }
+        monitor.flushPendingInput(); activityTracker.resetApplicationAttribution()
+        clearingAppActivity = true; activityReadToken &+= 1
+        activityActionError = nil
+        pendingActivity.removeApplications()
+        inFlightActivity.hourly.removeAll { !$0.applicationID.isEmpty }
+        activityReadOverlay.removeApplications()
+        activityLoadedHourly = activityLoadedHourly.filter { $0.value.applicationID.isEmpty }
+        appNameCache.removeAll(); publishActivitySnapshot()
+        diskQueue.async { [weak self] in
+            let result = Result { try store.clearAppActivity() }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.clearingAppActivity = false; self.activityTracker.resetApplicationAttribution()
+                if case let .failure(error) = result {
+                    self.storageError = error.localizedDescription
+                    self.activityActionError = error.localizedDescription
+                }
+                if self.activityVisible { self.loadActivity(day: self.activityDate) }
+            }
+        }
+    }
+    func activityAppName(_ identifier: String) -> String {
+        if let name = appNameCache[identifier] { return name }
+        let bundle = NSWorkspace.shared.urlForApplication(withBundleIdentifier: identifier).flatMap { Bundle(url: $0) }
+        let name = bundle?.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ??
+            bundle?.object(forInfoDictionaryKey: "CFBundleName") as? String ?? identifier
+        if appNameCache.count >= 256 { appNameCache.removeAll(keepingCapacity: true) }
+        appNameCache[identifier] = name
+        return name
+    }
     func flush() {
         saveWork?.cancel(); saveWork = nil
-        guard inFlight.isEmpty, !pending.isEmpty, let store else { return }
+        guard !clearing, activeReceipt == nil, !pending.isEmpty || !pendingActivity.isEmpty, let store else { return }
         inFlight = pending; pending.removeAll(keepingCapacity: true)
+        inFlightActivity = pendingActivity.batch; pendingActivity.removeAll()
         let rows = Array(inFlight.values), version = generation
+        let activity = inFlightActivity
         let receipt = WriteReceipt(); activeReceipt = receipt
         diskQueue.async { [weak self] in
-            let result = Result { try store.save(rows) }
+            let result = Result { try store.save(rows, activity: activity) }
             if case .success = result { receipt.succeeded = true } else { receipt.succeeded = false }
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.generation == version else { return }
@@ -434,12 +637,15 @@ struct HistoryDay: Identifiable {
                     for row in self.inFlight.values {
                         if self.pending[row.id] == nil { self.pending[row.id] = row } else { self.pending[row.id]!.merge(row) }
                     }
+                    self.pendingActivity.merge(self.inFlightActivity)
                     self.storageError = "保存失败：\(error.localizedDescription)"
                     self.retryCount += 1
                 } else { self.storageError = nil; self.retryCount = 0 }
                 self.inFlight.removeAll(keepingCapacity: true)
+                self.inFlightActivity = ActivityBatch()
                 self.activeReceipt = nil
-                if !self.pending.isEmpty && self.retryCount <= 3 { self.scheduleSave(after: self.retryCount == 0 ? 30 : Double(self.retryCount * 10)) }
+                if (!self.pending.isEmpty || !self.pendingActivity.isEmpty) && self.retryCount <= 3 { self.scheduleSave(after: self.retryCount == 0 ? 30 : Double(self.retryCount * 10)) }
+                self.startActivityReadIfPossible()
             }
         }
     }
@@ -454,25 +660,30 @@ struct HistoryDay: Identifiable {
                 store = restored; storageError = nil
             } catch { storageError = error.localizedDescription; return }
         }
-        retryCount = 0; flush(); refreshSnapshot()
+        retryCount = 0; flush(); startActivityReadIfPossible(); refreshSnapshot()
     }
     func flushBeforeExit() {
+        monitor.flushPendingInput()
+        finishActivitySession("appExit")
         stopUI(); windowExpiryWork?.cancel(); windowExpiryWork = nil; windowExpiryDeadline = nil
         saveWork?.cancel(); saveWork = nil; monitor.stop(); interruptEngine()
         if clearing { diskQueue.sync {}; return }
         // Serial ordering guarantees a previous in-flight transaction completes first.
         let rows = Array(pending.values), flightRows = Array(inFlight.values), receipt = activeReceipt, database = store
+        let activity = pendingActivity.batch, flightActivity = inFlightActivity
         diskQueue.sync {
             if let database {
-                if receipt?.succeeded == false { try? database.save(flightRows) }
-                try? database.save(rows)
+                if receipt?.succeeded == false { try? database.save(flightRows, activity: flightActivity) }
+                try? database.save(rows, activity: activity)
             }
         }
         pending.removeAll()
+        pendingActivity.removeAll()
     }
     func togglePause() {
         monitor.flushPendingInput()
         isPaused.toggle(); UserDefaults.standard.set(isPaused, forKey: "paused"); interruptEngine()
+        if isPaused { finishActivitySession("paused") }
         resetTenMinuteWindow()
         if isPaused { estimatedRhythm.reset(); lastEstimatedInputTime = nil }
         if isPaused { monitor.stop(); status = "已暂停"; flush() } else if !sleeping { monitor.start(); status = "正在确认上下文" }
@@ -538,7 +749,7 @@ struct HistoryDay: Identifiable {
         monitor.suspectedInputFilteringEnabled = suspectedInputFilteringEnabled
         monitor.chineseKeyboardCompatibilityEnabled = chineseKeyboardCompatibilityEnabled
         updateExclusions()
-        if countingRuleChanged { interruptEngine() }
+        if countingRuleChanged { finishActivitySession("settingsChanged"); interruptEngine() }
         monitor.diagnosticsEnabled = diagnosticsEnabled
         UserDefaults.standard.set(excludedAppsText, forKey: "excludedApps"); UserDefaults.standard.set(maximumGap, forKey: "maximumGap"); UserDefaults.standard.set(menuDisplay, forKey: "menuDisplay")
         UserDefaults.standard.set(suspectedInputFilteringEnabled, forKey: "suspectedInputFilteringEnabled")
@@ -563,6 +774,7 @@ struct HistoryDay: Identifiable {
     /// Resolved exclusions can arrive without another keyboard event. Unknown
     /// AX/revalidation statuses remain soft; they must not make WPM flicker.
     fileprivate func handleMonitoringStatus(_ value: String) {
+        if ["权限", "安全输入", "监听创建失败"].contains(where: { value.contains($0) }) { finishActivitySession("monitorUnavailable") }
         if Self.isHardMonitoringStatus(value) { interruptEngine() }
         if !isPaused { status = value }
         scheduleUI()
@@ -729,6 +941,7 @@ struct HistoryDay: Identifiable {
         else if phase == "typing" { nextStatus = "正在统计 · \(localPath ? "已确认" : "估算")输入段" }
         else { nextStatus = "候选输入段 · 数据不足" }
         if status != nextStatus { status = nextStatus }
+        publishActivitySnapshot()
         onMenuUpdate?()
         if snap.phase == .idle && !engine.completionPending && !hybridMenuNeedsUI(at: now) { stopUI() }
     }
@@ -761,6 +974,7 @@ struct HistoryDay: Identifiable {
         startHistoryRead()
     }
     func refreshHistoryIfVisible() {
+        if statisticsVisible && activityVisible { loadActivity(day: activityDate) }
         guard statisticsVisible && historyVisible else { return }
         loadHistory(days: historyDays)
     }
@@ -851,9 +1065,11 @@ struct HistoryDay: Identifiable {
     }
     /// Caller presents the destructive confirmation in SettingsView.
     func clearHistory() {
-        guard let store else { return }
+        guard !clearing, let store else { return }
         monitor.flushPendingInput()
         clearing = true; saveWork?.cancel(); saveWork = nil; interruptEngine()
+        activityReadToken &+= 1
+        activitySessionWork?.cancel(); activitySessionWork = nil; activitySessionDeadline = nil
         invalidateHistoryReads(clearRows: false)
         diskQueue.async {
             let result = Result { try store.clear() }
@@ -862,6 +1078,14 @@ struct HistoryDay: Identifiable {
                 else {
                     self.generation &+= 1; self.saveWork?.cancel(); self.saveWork = nil
                     self.pending.removeAll(); self.inFlight.removeAll()
+                    self.activeReceipt = nil
+                    self.pendingActivity.removeAll(); self.inFlightActivity = ActivityBatch()
+                    self.activityTracker = ActivityTracker()
+                    self.activityReadOverlay.removeAll()
+                    self.activityLoadedHourly.removeAll(); self.activityLoadedSessions.removeAll()
+                    self.activityHourly.removeAll(); self.activitySessions.removeAll(); self.activityScoreDays.removeAll()
+                    self.activityCoverageStart = nil; self.appNameCache.removeAll()
+                    self.activityActionError = nil
                     self.cached.removeAll()
                     self.invalidateHistoryReads(clearRows: true)
                     self.completedPrimaryMetric = nil; self.completedKPMMetric = nil
@@ -872,6 +1096,7 @@ struct HistoryDay: Identifiable {
                     self.engine = StatisticsEngine(config: SegmentationConfig(maximumGap: self.maximumGap, ruleID: Self.rule(self.maximumGap, suspectedInputFiltering: self.suspectedInputFilteringEnabled, chineseKeyboardCompatibility: self.chineseKeyboardCompatibilityEnabled)), timeZone: .current)
                 }
                 self.clearing = false; self.refreshSnapshot(); self.loadHistory(days: self.historyDays)
+                if self.activityVisible { self.loadActivity(day: self.activityDate) }
             }
         }
     }
@@ -953,7 +1178,138 @@ struct HistoryDay: Identifiable {
     failures += runCombinedEstimateChecks()
     failures += runRollingEstimateChecks()
     failures += runHistoryProjectionChecks()
+    failures += AppModel.runActivityIntegrationChecks()
     return failures
+}
+
+private extension AppModel {
+    /// Exercises asynchronous snapshots against a real isolated SQLite store.
+    /// No events are posted, no global capture starts, and user prefs stay intact.
+    static func runActivityIntegrationChecks() -> [String] {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Keytempo-activity-check-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var failures = [String]()
+        func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
+            if !condition() { failures.append("FAIL: activity integration \(message)") }
+        }
+        let model = AppModel(dataDirectory: directory, monitoringEnabled: false, perAppTracking: true)
+        model.isPaused = false; model.excludedAppsText = ""; model.updateExclusions()
+        let time = ProcessInfo.processInfo.systemUptime
+        let date = Calendar.current.date(bySettingHour: 12, minute: 0, second: 0, of: Date())!
+        func type(_ range: Range<Int>, source: InputSource = .global) {
+            for index in range {
+                let offset = Double(index) * 0.2
+                model.receive(ClassifiedInput(time: time + offset, date: date.addingTimeInterval(offset), context: 4001,
+                                              category: .textEntry, evidence: source == .global ? .probable : .confirmed,
+                                              source: source, operationID: UInt64(index + 100), language: "en",
+                                              committedCharacters: source == .adapter ? 1 : nil,
+                                              applicationID: "org.example.CapturedEditor"))
+            }
+        }
+        func waitFor(_ condition: () -> Bool, _ message: String) {
+            let limit = Date().addingTimeInterval(5)
+            while !condition() && Date() < limit { RunLoop.current.run(until: Date().addingTimeInterval(0.01)) }
+            expect(condition(), message)
+        }
+        // Aggregate deltas arriving during an asynchronous disk read must be
+        // overlaid once, even when a later transaction persists them.
+        type(0..<31)
+        model.loadActivity(day: date)
+        type(31..<41)
+        model.flush()
+        waitFor({ !model.activityLoading && model.activeReceipt == nil }, "read/write completed")
+        model.refreshSnapshot()
+        var combined = model.activityHourly.filter { $0.applicationID.isEmpty }.reduce(into: RhythmTotals()) { $0.merge($1.totals) }
+        expect(combined.keys == 41 && abs(combined.intervals - 40) < 1e-6 && abs(combined.seconds - 8) < 1e-4,
+               "in-flight read overlay neither doubles nor drops deltas")
+        expect(abs((combined.wpm ?? 0) - 60) < 1e-3 && combined.score != nil, "weighted WPM and sufficient score")
+        expect(model.activityHourly.contains { $0.applicationID == "org.example.CapturedEditor" && $0.totals.keys == 41 },
+               "original event application attributed")
+        expect(model.activitySessions.count == 1 && model.activitySessions.first?.totals.keys == 41,
+               "one absolute session checkpoint")
+        // A subsequent confirmed adapter lane must never enter practice stats.
+        type(50..<55, source: .adapter)
+        model.refreshSnapshot()
+        expect(model.activityHourly.filter { $0.applicationID.isEmpty }.reduce(0) { $0 + $1.totals.keys } == 41,
+               "confirmed validation lane excluded")
+        model.loadActivity(day: date.addingTimeInterval(-86400)); model.loadActivity(day: date)
+        waitFor({ !model.activityLoading }, "latest date selection wins")
+        expect(model.activityHourly.filter { $0.applicationID.isEmpty }.reduce(0) { $0 + $1.totals.keys } == 41,
+               "stale read cannot publish another day")
+        type(60..<65); model.flush()
+        model.clearAppActivity()
+        type(65..<70); model.flush()
+        waitFor({ !model.clearingAppActivity && model.activeReceipt == nil && !model.activityLoading }, "app-only clear completed")
+        model.flushBeforeExit()
+        do {
+            let database = try AggregateStore(url: directory.appendingPathComponent("statistics.sqlite"))
+            let start = Calendar.current.startOfDay(for: date), end = start.addingTimeInterval(86400)
+            let rows = try database.queryHourly(since: start, until: end, includeApplications: true)
+            combined = rows.filter { $0.applicationID.isEmpty }.reduce(into: RhythmTotals()) { $0.merge($1.totals) }
+            expect(rows.allSatisfy { $0.applicationID.isEmpty } && combined.keys == 51,
+                   "app deletion survives in-flight saves and keeps combined totals")
+            let savedSessions = try database.querySessions(since: start, until: end)
+            expect(savedSessions.reduce(0) { $0 + $1.totals.keys } == 51,
+                   "app-only deletion preserves sessions")
+        } catch { failures.append("FAIL: activity integration store read: \(error.localizedDescription)") }
+        model.clearHistory(); model.flush(); model.clearHistory(); model.flushBeforeExit()
+        do {
+            let database = try AggregateStore(url: directory.appendingPathComponent("statistics.sqlite"))
+            let clearedHours = try database.queryHourly(since: date.addingTimeInterval(-86400), until: date.addingTimeInterval(86400), includeApplications: true)
+            let clearedSessions = try database.querySessions(since: date.addingTimeInterval(-86400), until: date.addingTimeInterval(86400))
+            expect(clearedHours.isEmpty,
+                   "full clear/quit cannot resurrect hourly data")
+            expect(clearedSessions.isEmpty,
+                   "full clear/quit cannot resurrect sessions")
+        } catch { failures.append("FAIL: activity integration clear read: \(error.localizedDescription)") }
+        let offDirectory = directory.appendingPathComponent("opt-out")
+        let off = AppModel(dataDirectory: offDirectory, monitoringEnabled: false, perAppTracking: false)
+        off.isPaused = false
+        off.receive(ClassifiedInput(time: time, date: date, context: 5001, category: .textEntry, evidence: .probable,
+                                    source: .global, language: "zh", applicationID: "org.example.NeverPersist"))
+        off.flushBeforeExit()
+        do {
+            let database = try AggregateStore(url: offDirectory.appendingPathComponent("statistics.sqlite"))
+            let rows = try database.queryHourly(since: date.addingTimeInterval(-86400), until: date.addingTimeInterval(86400), includeApplications: true)
+            expect(rows.count == 1 && rows[0].applicationID.isEmpty && rows[0].totals.keys == 1 && rows[0].totals.wpm == nil,
+                   "opt-out saves no app IDs and isolated key creates no rate")
+        } catch { failures.append("FAIL: activity integration opt-out read: \(error.localizedDescription)") }
+        let day = Calendar.current.startOfDay(for: date)
+        off.activityVisible = true; off.activityDate = day
+        off.mergeLoadedActivity(ActivityBatch(sessions: [
+            TypingSession(id: "prior-day", start: day.addingTimeInterval(-1), end: day,
+                          timezone: TimeZone.current.identifier, rule: off.activityCurrentRule, totals: RhythmTotals(keys: 2), endReason: "dayBoundary"),
+            TypingSession(id: "midnight-point", start: day, end: day,
+                          timezone: TimeZone.current.identifier, rule: off.activityCurrentRule, totals: RhythmTotals(keys: 1))
+        ]))
+        off.publishActivitySnapshot()
+        expect(off.activitySessions.map(\.id) == ["midnight-point"], "midnight overlay uses half-open session range")
+        off.releaseActivity()
+
+        let bilingual = AppModel(dataDirectory: directory.appendingPathComponent("bilingual"), monitoringEnabled: false, perAppTracking: false)
+        bilingual.isPaused = false
+        for (start, language, context) in [(0, "en", UInt64(6001)), (10, "zh", UInt64(6002))] {
+            if start > 0 { bilingual.interruptEngine() }
+            for index in 0..<5 {
+                let offset = Double(start) + Double(index) * 0.2
+                bilingual.receive(ClassifiedInput(time: time + offset, date: date.addingTimeInterval(offset), context: context,
+                                                  category: language == "zh" ? .composition : .textEntry,
+                                                  evidence: .probable, source: .global, language: language))
+            }
+        }
+        bilingual.flushBeforeExit()
+        do {
+            let database = try AggregateStore(url: directory.appendingPathComponent("bilingual/statistics.sqlite"))
+            let rows = try database.queryHourly(since: day, until: day.addingTimeInterval(86400))
+            let totals = rows.reduce(into: RhythmTotals()) { $0.merge($1.totals) }
+            let sessions = try database.querySessions(since: day, until: day.addingTimeInterval(86400))
+            expect(totals.keys == 10 && abs(totals.intervals - 8) < 1e-9 && abs(totals.seconds - 1.6) < 1e-4 &&
+                   abs((totals.wpm ?? 0) - 60) < 1e-3 && sessions.count == 1 && sessions[0].totals.keys == 10,
+                   "bilingual source boundary combines session quantities without timing the switch")
+        } catch { failures.append("FAIL: activity integration bilingual read: \(error.localizedDescription)") }
+        model.releaseActivity()
+        return failures
+    }
 }
 
 /// Presentation regressions use an isolated database and synthetic classified

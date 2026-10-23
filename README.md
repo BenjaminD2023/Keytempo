@@ -26,9 +26,31 @@ The menu popup emphasizes the **past ten minutes' average estimated WPM**, with 
 
 The daily overview and menu popup show one **estimated keystroke counter** for everyday input in other apps. Current speed, today's average estimated WPM and secondary weighted KPM combine accepted input across all languages. The average is labeled **Today's average**. If some older records were counted differently, the UI shows how many keystrokes the average uses and explains the excluded records in help; all quantities remain in the total. Shortcut and context filtering remain active, and spaces are excluded from the global counter and KPM. Large counts use at most three numeric digits with K/M/B suffixes (for example, `1.49K`); hover to see the full integer. History shows a combined estimated WPM chart and one table with combined quantities, WPM and separate KPM. Confirmed-editor character metrics stay on the Validation tab and in raw CSV exports, separate from the global WPM trend.
 
+## Activity and Typing Score
+
+The **Activity** tab adds a date-selectable hourly timeline, automatic session summaries, rhythm consistency and a 30-day Typing Score trend. Hours show accepted keystrokes, actual typing time and weighted estimated WPM. A session groups accepted input until a five-minute gap or a pause, sleep, quit, day, timezone or counting-rule boundary; its elapsed span is separate from typing time. Focus and source interruptions still break measurable intervals, so session grouping never fills those gaps with typing time. Single-keystroke sessions remain visible without an invented speed.
+
+**Typing Score** is a personal practice index from 0 to 100. Each component contributes 25%, so more accepted input and more time actually spent typing can outweigh a modest speed difference:
+
+| Component | Component score (0–100) |
+|---|---|
+| Speed | `min(estimated WPM / 100, 1) × 100` |
+| Consistency | `100 / (1 + CV)`, where CV is accepted-interval standard deviation divided by its mean |
+| Typing time | `min(actual typing seconds / 1,800, 1) × 100` |
+| Volume | `min(accepted keystrokes / 10,000, 1) × 100` |
+
+The score is the mean of these four components (`practice-v1`). Consistency and scoring require at least 20 accepted intervals and two seconds of typing; insufficient data shows no score. The 100 WPM, 30-minute and 10,000-key references are transparent product choices, not scientific population norms. This index does not measure accuracy or certify typing skill. A steadier pattern is not proof of intentional input, and the existing filters cannot recognize every macro or determine arbitrary text's meaning.
+
+Daily and hourly WPM are `60 × summed accepted-interval counts / summed typing seconds / 5`. Consistency is recomputed from aggregate timing moments, and daily scores are recomputed from the merged totals rather than averaged from session scores. Incompatible counting methods do not silently blend: affected hour/app rates and daily trend scores are withheld, while a daily summary identifies a current-method subset when needed. Waiting, shortcuts and excluded events earn no typing time or score.
+
+**Store per-app activity locally** is optional and off by default, available in Activity and Settings. Enabling it saves only bundle identifiers and activity aggregates; names are resolved locally for display. Turning it off stops new app-specific collection and hides its details. Existing app details can be separately cleared with confirmation, retaining combined totals and sessions. No input text, clipboard, window titles, URLs, key sequences or individual interval sequences are saved. Consistency needs only counts, durations and the sum of squared intervals.
+
+These finer details start recording with 0.4.0. Existing daily history survives the additive database migration, but cannot reconstruct old hours, sessions or consistency. Select a day within the retained five years to inspect recorded details; the score trend covers the 30 days ending on that selection and omits missing or insufficient days. Only global estimated input contributes; typing in the confirmed validation editor stays separate.
+
 ## Features
 
 - Current menu bar speed or WPM while typing with today's count otherwise, a ten-minute average in the popup, daily average/totals, pause/resume and optional launch at login.
+- Hourly activity, automatic session summaries, optional local per-app activity, rhythm consistency and a multi-factor Typing Score.
 - English and Simplified Chinese app interfaces, independent of input-source language.
 - Combined input statistics across all accepted languages, without recorded-language selection.
 - Combined 7-day, 30-day, 90-day, one-year and five-year history, separate KPM columns and CSV export.
@@ -62,7 +84,7 @@ Choose **Check for Updates…** in the app menu or Settings to check manually, t
 
 The 0.1.1 app (original app/tag `1.1.1`) does not contain an updater; install the first updater-enabled release manually once. Updates do not grant privacy permissions, bypass macOS approval or convert global Chinese keystrokes into confirmed CPM. Certificate signing and download signatures protect different parts of the update process. See [release instructions](docs/RELEASING.md) for publisher setup and known signing limits.
 
-Keytempo uses `0.x` versions: historical `1.1.0` and `1.2.0` are documented as `0.1.0` and `0.2.0`. Version `0.3.2` uses build 15, combines language metrics and clarifies the menu's WPM display. Version `0.3.1` build 14 introduced Chinese input recovery and the optional typing/count menu mode; its tag and downloads are preserved. Existing signed `1.x` downloads and tags also retain their original identifiers. Internal build numbers continue increasing for updater compatibility. Release notes describe the current version's changes; the [complete changelog and version mapping](CHANGELOG.md) retains the full history.
+Keytempo uses `0.x` versions: historical `1.1.0` and `1.2.0` are documented as `0.1.0` and `0.2.0`. Version `0.4.0` uses build 16 and adds activity analytics and the multi-factor practice score. Version `0.3.2` build 15 combined language metrics and clarified the menu's WPM display. Version `0.3.1` build 14 introduced Chinese input recovery and the optional typing/count menu mode; its tag and downloads are preserved. Existing signed `1.x` downloads and tags also retain their original identifiers. Internal build numbers continue increasing for updater compatibility. Release notes describe the current version's changes; the [complete changelog and version mapping](CHANGELOG.md) retains the full history.
 
 ## Build and test
 

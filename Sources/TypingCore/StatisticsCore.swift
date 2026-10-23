@@ -42,16 +42,20 @@ public struct ClassifiedInput: Sendable {
     public var source: InputSource
     public var operationID: UInt64?
     public var language: String
+    /// Optional frontmost app identity captured with the context, never a title
+    /// or text value. Persisted only by explicitly enabled app analytics.
+    public var applicationID: String?
     /// nil means output coverage is unavailable; zero is an observed operation
     /// with no committed characters (for example composition or deletion).
     public var committedCharacters: Int?
     public init(time: Double, date: Date, context: UInt64, category: InputCategory,
                 evidence: Evidence, source: InputSource, operationID: UInt64? = nil,
-                language: String = "und", committedCharacters: Int? = nil) {
+                language: String = "und", committedCharacters: Int? = nil, applicationID: String? = nil) {
         self.time = time; self.date = date; self.context = context
         self.category = category; self.evidence = evidence; self.source = source
         self.operationID = operationID
         self.language = language; self.committedCharacters = committedCharacters
+        self.applicationID = applicationID
     }
 }
 

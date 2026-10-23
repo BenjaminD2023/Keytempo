@@ -206,18 +206,21 @@ struct StatisticsView: View {
 
             Picker(L("统计页面"), selection: $tab) {
                 Text(L("今日概况")).tag("today")
+                Text(L("活动")).tag("activity")
                 Text(L("历史趋势")).tag("history")
                 Text(L("验证输入")).tag("editor")
                 Text(L("统计口径")).tag("method")
                 if model.diagnosticsEnabled { Text(L("诊断")).tag("diagnostics") }
             }
             .pickerStyle(.segmented)
+            .labelsHidden()
             .padding(.horizontal, 24)
             .padding(.bottom, 20)
 
             Divider()
             Group {
                 switch tab {
+                case "activity": ActivityView(model: model)
                 case "history": history
                 case "editor": editor
                 case "method": methodology
@@ -598,6 +601,7 @@ private struct MetricCard: View {
 struct SettingsView: View {
     @ObservedObject var model: AppModel
     @ViewState private var confirmClear = false
+    @ViewState private var confirmClearApps = false
 
     var body: some View {
         Form {
@@ -690,6 +694,12 @@ struct SettingsView: View {
                     Button(L("重试保存"), action: model.retrySave)
                 }
             }
+            Section(L("应用活动隐私")) {
+                Toggle(L("按应用记录活动"), isOn: Binding(get: { model.perAppTrackingEnabled }, set: model.setPerAppTracking))
+                Text(L("默认关闭。开启后仅在本机保存应用标识符与统计汇总，不保存窗口标题、网址或输入内容。关闭后停止新增；已保存的应用明细可单独清除。"))
+                    .font(.caption).foregroundStyle(.secondary)
+                Button(L("清除应用活动明细…"), role: .destructive) { confirmClearApps = true }
+            }
         }
         .formStyle(.grouped)
         .padding(8)
@@ -699,6 +709,12 @@ struct SettingsView: View {
             Button(L("取消"), role: .cancel) {}
         } message: {
             Text(L("将删除本机统计汇总并重置当前统计。此操作无法撤销；已导出的 CSV 不受影响。"))
+        }
+        .confirmationDialog(L("清除应用活动明细？"), isPresented: $confirmClearApps, titleVisibility: .visible) {
+            Button(L("清除应用活动明细"), role: .destructive, action: model.clearAppActivity)
+            Button(L("取消"), role: .cancel) {}
+        } message: {
+            Text(L("仅删除按应用保存的统计；合并统计与会话保留。此操作无法撤销。"))
         }
         .environment(\.locale, Locale(identifier: model.interfaceLanguage))
     }

@@ -133,7 +133,7 @@ import TypingCore
     func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow else { return }
         if window === statsWindow {
-            model.statisticsVisible = false; model.historyVisible = false; model.releaseHistory(); model.interruptConfirmed()
+            model.statisticsVisible = false; model.historyVisible = false; model.releaseHistory(); model.releaseActivity(); model.interruptConfirmed()
             // Drop editor/Charts state after closing; the menu does not retain a hidden dashboard.
             window.contentViewController = nil; statsWindow = nil
         } else if window === settingsWindow { window.contentViewController = nil; settingsWindow = nil }

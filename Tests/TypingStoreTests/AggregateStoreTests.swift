@@ -98,7 +98,7 @@ final class AggregateStoreTests {
                 #expect(row.characters == 0); #expect(row.ratedCharacters == 0)
                 #expect(row.characterSeconds == 0); #expect(row.characterIntervals == 0)
             }
-            #expect(try fixtureScalar("PRAGMA user_version", at: url) == "2")
+            #expect(try fixtureScalar("PRAGMA user_version", at: url) == "3")
             #expect(try fixtureScalar("SELECT value FROM unrelated", at: url) == "preserved")
             let reopened = try AggregateStore(url: url)
             #expect(try reopened.query(since: "0000").first?.keys == 17)
