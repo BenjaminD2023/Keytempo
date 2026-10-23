@@ -14,10 +14,24 @@ The project changed its public version convention before the `0.3.0` release. Hi
 | 0.2.1 | 1.2.1 / `v1.2.1` | 10 | Original public release |
 | 0.3.0 | 0.3.0 / `v0.3.0` | 11 | First release with the normalized app version |
 | 0.3.1 | 0.3.1 / `v0.3.1` | 14 | Chinese input recovery and hybrid menu display |
+| 0.3.2 | 0.3.2 / `v0.3.2` | 15 | Combined language metrics and clearer menu behavior |
 
 Already published signed archives, source tags and download URLs retain their original `1.x` identifiers. Their changelog labels are normalized; their embedded app versions have not been rewritten. New releases use `0.x` app versions and tags. The internal build number continues increasing, so Sparkle can offer `0.3.0` (build 11) to apps displaying `1.2.0` (build 9) or `1.2.1` (build 10).
 
 ## [Unreleased]
+
+## [0.3.2] - 2026-10-23
+
+### Changed
+
+- Limit GitHub release notes to the current version's changes while retaining the complete version history in this changelog.
+- Combine accepted input from all languages into one live and historical estimated WPM, with separate KPM retained. Remove recorded-language settings, the history language selector and per-language detail table; the App language picker remains available. Existing saved language rows are preserved and combined at query time without rewriting the database, while confirmed character metrics stay separate from global estimates.
+
+### Fixed
+
+- Name the menu setting **Primary rate (estimated WPM)** / **主要速度（估算 WPM）** and consistently show operation KPM divided by five, including while the confirmed editor is active. Actual confirmed CPM remains available in validation and statistics; the typing/count hybrid and independent KPM modes remain available.
+- Keep the hybrid menu mode on WPM during input, sample warm-up and temporary context rechecks. After input is confirmed stopped, show `— WPM` for three seconds before today's keystroke count, without adding that waiting time to typing duration.
+- Label today's average consistently as **今日平均速度** / **Today's average** in the popup and statistics card. When some older records were counted differently, show the number of keystrokes used for the average and explain the excluded records in help; all saved counts remain in the total.
 
 ## [0.3.1] - 2026-10-23
 
@@ -140,7 +154,8 @@ Originally local `1.1.0` builds; no separate public release archive was publishe
 - Separate global estimates from a real confirmed editor adapter, with adaptive segment timing and local aggregate storage.
 - Establish core, persistence and application integration tests and document the limits of real-world input and resource validation.
 
-[Unreleased]: https://github.com/BenjaminD2023/Keytempo/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/BenjaminD2023/Keytempo/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/BenjaminD2023/Keytempo/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/BenjaminD2023/Keytempo/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/BenjaminD2023/Keytempo/compare/v1.2.1...v0.3.0
 [0.2.1]: https://github.com/BenjaminD2023/Keytempo/compare/v1.2.0...v1.2.1

@@ -25,9 +25,15 @@ enum InputLanguages {
     static var allowsCurrent: Bool { policy.allows(languageCode: current.languageCode) }
 
     static func reloadPolicy() {
-        let codes = UserDefaults.standard.stringArray(forKey: "monitoredLanguages").map(Set.init)
-        state.policy = InputLanguagePolicy(selectedCodes: codes)
+        // Recording now combines every input-source language. An old explicit
+        // selection (including an empty one) must not silently keep filtering.
+        state.policy = recordingPolicy(in: .standard)
         NotificationCenter.default.post(name: policyChanged, object: nil)
+    }
+
+    fileprivate static func recordingPolicy(in defaults: UserDefaults) -> InputLanguagePolicy {
+        defaults.removeObject(forKey: "monitoredLanguages")
+        return InputLanguagePolicy(selectedCodes: nil)
     }
 
     static func refreshCurrent() { state.refreshSource() }
@@ -89,7 +95,7 @@ enum InputLanguages {
         init() {
             source = TISCopyCurrentKeyboardInputSource().map { read($0.takeRetainedValue()) }
                 ?? Source(identifier: "", modeIdentifier: "", name: "", languageCode: "und", inputMethod: false)
-            policy = InputLanguagePolicy(selectedCodes: UserDefaults.standard.stringArray(forKey: "monitoredLanguages").map(Set.init))
+            policy = InputLanguages.recordingPolicy(in: .standard)
             observer = DistributedNotificationCenter.default().addObserver(
                 forName: Notification.Name(kTISNotifySelectedKeyboardInputSourceChanged as String), object: nil, queue: .main
             ) { [weak self] _ in self?.refreshSource() }
@@ -158,6 +164,18 @@ func runInputLanguageChecks() -> [String] {
     if options.contains(where: { InputLanguagePolicy.normalize($0.code) != $0.code }) { failures.append("input language options not normalized") }
     if InputLanguages.withPolicyForChecks([], { InputLanguages.allowsCurrent }) { failures.append("empty input language selection did not exclude current source") }
     if !InputLanguages.withPolicyForChecks(nil, { InputLanguages.allowsCurrent }) { failures.append("all input languages selection excluded current source") }
+    let suite = "Keytempo.language-migration-check.\(UUID().uuidString)"
+    if let defaults = UserDefaults(suiteName: suite) {
+        defer { defaults.removePersistentDomain(forName: suite) }
+        for legacy in [[], ["en"], ["zh"]] {
+            defaults.set(legacy, forKey: "monitoredLanguages")
+            let policy = InputLanguages.recordingPolicy(in: defaults)
+            if defaults.object(forKey: "monitoredLanguages") != nil ||
+                !["en", "zh", "ja", "und"].allSatisfy({ policy.allows(languageCode: $0) }) {
+                failures.append("legacy input-language selection continued filtering unified recording")
+            }
+        }
+    } else { failures.append("could not create isolated language-migration preferences") }
     failures += InputLanguages.exerciseSourceChecks()
     return failures
 }

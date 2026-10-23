@@ -75,7 +75,7 @@ public struct HistoryMetricRow: Sendable {
     }
 }
 
-/// One calendar bucket, language and evidence lane. Rates use the sums of
+/// One calendar bucket, language grouping and evidence lane. Rates use the sums of
 /// observed numerators and durations, never an average of already rounded rates.
 public struct HistoryAggregate: Sendable {
     public let periodStart: String
@@ -99,7 +99,9 @@ public struct HistoryAggregate: Sendable {
     public var hasMixedRules: Bool { rules.count > 1 }
     public var kpm: Double? { rate(intervals, seconds, minimumIntervals: intervals) }
     public var estimatedWPM: Double? {
-        TypingRate.primaryUnit(forLanguage: language) == .wpm ? TypingRate.estimatedWPM(fromKPM: kpm) : nil
+        let combinedEstimate = language == HistoryAggregation.combinedLanguage && evidence == .probable
+        return combinedEstimate || TypingRate.primaryUnit(forLanguage: language) == .wpm
+            ? TypingRate.estimatedWPM(fromKPM: kpm) : nil
     }
     public var cpm: Double? {
         evidence == .confirmed ? rate(ratedCharacters, characterSeconds, minimumIntervals: characterIntervals) : nil
@@ -131,6 +133,8 @@ public struct HistoryAggregate: Sendable {
 }
 
 public enum HistoryAggregation {
+    /// A presentation grouping, never a replacement for stored source metadata.
+    public static let combinedLanguage = "mul"
     private struct Bounds { let start: String; let end: String }
     private struct Key: Hashable { let start: String; let language: String; let evidence: String }
 
@@ -140,8 +144,12 @@ public enum HistoryAggregation {
     /// Callers bound their source query (the app's store permits 50,000 rows).
     /// Malformed dates and unknown evidence are excluded because no reliable
     /// period/effective lane can be assigned; numeric rejections remain visible.
+    /// Combined languages sum already observed intervals and durations, without
+    /// creating an interval between rows. Evidence lanes and rule compatibility
+    /// remain independent; confirmed metadata cannot change an estimated rate.
     public static func aggregate(_ rows: [HistoryMetricRow], granularity: HistoryGranularity,
-                                 timeZone: TimeZone, startDay: String? = nil, endDay: String? = nil) -> [HistoryAggregate] {
+                                 timeZone: TimeZone, startDay: String? = nil, endDay: String? = nil,
+                                 combineLanguages: Bool = false) -> [HistoryAggregate] {
         let calendar = calendar(timeZone)
         if let startDay, parseDay(startDay, calendar: calendar) == nil { return [] }
         if let endDay, parseDay(endDay, calendar: calendar) == nil { return [] }
@@ -168,9 +176,10 @@ public enum HistoryAggregation {
                                 end: endDay.map { min(last, $0) } ?? last)
                 dates[row.day] = bounds
             }
-            let key = Key(start: bounds.start, language: row.language, evidence: row.evidence.rawValue)
+            let language = combineLanguages ? combinedLanguage : row.language
+            let key = Key(start: bounds.start, language: language, evidence: row.evidence.rawValue)
             var bucket = grouped[key] ?? HistoryAggregate(periodStart: bounds.start, periodEnd: bounds.end,
-                                                          language: row.language, evidence: row.evidence)
+                                                          language: language, evidence: row.evidence)
             bucket.merge(row)
             grouped[key] = bucket
         }

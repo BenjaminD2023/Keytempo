@@ -36,6 +36,8 @@ Keytempo uses `0.x` app versions and tags. The historical changelog names were n
 
 Maintain the complete [CHANGELOG.md](../CHANGELOG.md) on every release. Use ISO dates and concrete `Added`, `Changed`, `Fixed`, `Removed`, `Deprecated` or `Security` entries when relevant, with release/compare links and explicit statistical or coverage changes. Preserve prior release facts under their normalized labels and original artifact aliases. Move completed unreleased entries into the new version and keep the next unreleased comparison pointed at that tag.
 
+GitHub release notes contain only the matching version's changelog section, with brief architecture, signing and checksum context. The publisher uses `scripts/release-notes.py` and fails if that section is missing, duplicated or empty; it never falls back to copying the full changelog. Keep the complete history in `CHANGELOG.md`, and do not rewrite existing releases when changing this publication format.
+
 ## Prepare a version
 
 1. Update `CFBundleShortVersionString` (for example, `0.3.0`) and increment integer `CFBundleVersion` in `Resources/Info.plist`; the build must exceed every previously published build, including old `1.x` versions.

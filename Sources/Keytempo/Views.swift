@@ -67,7 +67,7 @@ struct MenuContent: View {
                 HStack {
                     Text(L("今日累计")).font(.headline)
                     Spacer()
-                    Text(L("全部记录语言")).font(.caption).foregroundStyle(.secondary)
+                    Text(L("合并全部输入语言")).font(.caption).foregroundStyle(.secondary)
                 }
                 Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 8) {
                     GridRow {
@@ -78,7 +78,7 @@ struct MenuContent: View {
                             .help(L("全语言敲键数量：%@；快捷键与空格不计入。", model.dailyEstimate.keys.formatted()))
                     }
                     GridRow {
-                        Text(model.todayAverageIsPartial ? L("今日平均（当前口径）") : L("今日平均速度"))
+                        Text(L("今日平均速度"))
                             .foregroundStyle(.secondary)
                         Spacer(minLength: 8)
                         Text(primaryCadence(model.todayAverageWPM, unit: .wpm)).fontWeight(.medium)
@@ -95,9 +95,9 @@ struct MenuContent: View {
                     }
                 }.font(.callout).monospacedDigit()
                 if model.todayAverageIsPartial {
-                    Text(L("均速仅含当前口径 · %@ 次敲键", compactKeystrokeCount(model.todayAverageCoveredKeys)))
+                    Text(L("平均速度基于 %@ 次敲键", compactKeystrokeCount(model.todayAverageCoveredKeys)))
                         .font(.caption).foregroundStyle(.secondary)
-                        .help(L("今日均速使用当前统计口径的 %@ 次敲键；累计数量保留全部口径。", model.todayAverageCoveredKeys.formatted()))
+                        .help(L("平均速度基于 %@ 次敲键；部分旧记录使用不同的计数方式，未纳入平均值，累计数量仍保留。", model.todayAverageCoveredKeys.formatted()))
                 }
             }
             if let error = model.storageError {
@@ -160,7 +160,6 @@ struct MenuContent: View {
     }
 
     private var currentSpeed: some View {
-        let metric = model.selectedMenuMetric
         let speed = model.selectedMenuSpeed
         let isKPM = model.menuDisplay == "kpm"
         return VStack(alignment: .leading, spacing: 6) {
@@ -171,7 +170,7 @@ struct MenuContent: View {
                     .font(.system(size: 17, weight: .medium)).monospacedDigit()
             }
             HStack(spacing: 6) {
-                Text(isKPM ? L("全部记录语言") : model.languageName(metric.language))
+                Text(L("合并全部输入语言"))
                 if model.recentEvidence == .confirmed && !isKPM {
                     Text("·")
                     Text(L("已接入路径"))
@@ -179,7 +178,6 @@ struct MenuContent: View {
                 Spacer(minLength: 6)
                 Text(speed.value == nil ? L("当前输入段数据不足") : model.selectedSpeedIsRecent ? L("最近已停止") : L("正在输入"))
             }.font(.caption).foregroundStyle(.secondary)
-            .help(model.currentInputLanguage)
         }
         .accessibilityElement(children: .combine)
         .help(L("当前速度约每秒更新；停止后保留最近值，等待不计入输入时长。"))
@@ -190,7 +188,6 @@ struct MenuContent: View {
 struct StatisticsView: View {
     @ObservedObject var model: AppModel
     @ViewState private var tab = "today"
-    @ViewState private var historyLanguage = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -242,10 +239,8 @@ struct StatisticsView: View {
                 if !model.hasInputPermission || !model.hasAccessibilityPermission {
                     permissionSummary
                 }
-                Text(L("当前输入语言：%@", model.currentInputLanguage))
-                    .font(.callout).foregroundStyle(.secondary)
                 MetricCard(title: L("日常输入（估算）"), subtitle: L(model.chineseKeyboardCompatibilityEnabled ? "全局监听 · 中文键盘兼容模式" : "全局监听 + 可编辑区域证据"), metric: model.probable, tint: AppStyle.estimated, isGlobal: true, totals: model.dailyEstimate, recentKPM: model.estimatedRecentKPM, todayAverageWPM: model.todayAverageWPM, todayAverageIsPartial: model.todayAverageIsPartial, todayAverageCoveredKeys: model.todayAverageCoveredKeys, isRecentRate: model.recentSpeedIsFrozen || model.phase == "idle")
-                Text(L("当前速度按输入源语言显示；今日均速和累计合并全部记录语言。"))
+                Text(L("当前速度、今日平均速度和累计合并全部输入语言。"))
                     .font(.caption).foregroundStyle(.secondary)
                 GroupBox {
                     VStack(alignment: .leading, spacing: 9) {
@@ -292,18 +287,11 @@ struct StatisticsView: View {
         }
     }
 
-    private var selectedHistoryLanguage: String {
-        let options = model.historyLanguageOptions
-        if options.contains(where: { $0.id == historyLanguage }) { return historyLanguage }
-        if options.contains(where: { $0.id == model.currentInputLanguageCode }) { return model.currentInputLanguageCode }
-        return options.first?.id ?? model.currentInputLanguageCode
-    }
-
-    private var selectedHistoryRows: [HistoryDay] {
-        model.history.filter { $0.language == selectedHistoryLanguage }.sorted { $0.day < $1.day }
+    private var historyRows: [HistoryDay] {
+        model.history.sorted { $0.day < $1.day }
     }
     private var historyHasRates: Bool {
-        selectedHistoryRows.contains { $0.estimatedWPM != nil }
+        historyRows.contains { $0.estimatedWPM != nil }
     }
 
     private var historyGranularityLabel: String {
@@ -370,19 +358,11 @@ struct StatisticsView: View {
                             .foregroundStyle(.secondary)
                     }.frame(maxWidth: .infinity).frame(height: 220)
                 } else {
-                    HStack(alignment: .firstTextBaseline) {
-                        Picker(L("图表语言"), selection: Binding(get: { selectedHistoryLanguage }, set: { historyLanguage = $0 })) {
-                            ForEach(model.historyLanguageOptions) { language in
-                                Text(language.name).tag(language.id)
-                            }
-                        }.frame(maxWidth: 300)
-                        Spacer()
-                        Text(L("按键折算 WPM（估算）")).font(.callout).foregroundStyle(.secondary)
-                    }
-                    Text(L("图表仅显示所选语言的估算 WPM；接入路径的真实 CPM 见下方明细，不与 WPM 叠加。"))
+                    Text(L("合并全部输入语言")).font(.headline)
+                    Text(L("图表显示全部输入语言合并后的估算 WPM；真实 CPM 仅在验证输入区显示，不与 WPM 叠加。"))
                         .font(.caption).foregroundStyle(.secondary)
                     if historyHasRates {
-                        historyChart.id(selectedHistoryLanguage)
+                        historyChart
                     } else {
                         VStack(spacing: 10) {
                             Image(systemName: "chart.bar.xaxis").font(.system(size: 32)).foregroundStyle(.tertiary)
@@ -391,9 +371,8 @@ struct StatisticsView: View {
                         }.frame(maxWidth: .infinity).frame(height: 210)
                     }
                     combinedHistoryTable
-                    historyTable
                 }
-                Text(L("历史按所选周期和输入语言分别汇总估算 WPM；不同语言不混合，独立 KPM 保留。"))
+                Text(L("历史按所选周期合并全部输入语言，统一显示估算 WPM，并保留独立 KPM。"))
                     .font(.caption).foregroundStyle(.secondary)
                 Text(L("速度按汇总数量与实际覆盖时长计算，不直接平均各日速度。不同统计规则保留在 CSV 中，不能视为完全可比。"))
                     .font(.caption).foregroundStyle(.secondary)
@@ -405,7 +384,7 @@ struct StatisticsView: View {
 
     private var historyChart: some View {
         Chart {
-            ForEach(selectedHistoryRows) { day in
+            ForEach(historyRows) { day in
                 if let rate = day.estimatedWPM {
                     BarMark(x: .value(L("本地日期"), day.day), y: .value("WPM", rate))
                         .foregroundStyle(by: .value(L("来源"), L("全局估算")))
@@ -426,82 +405,32 @@ struct StatisticsView: View {
             }
         }
         .frame(height: 235)
-        .accessibilityLabel(L("所选语言的估算 WPM 趋势，%@", historyGranularityLabel))
-    }
-
-    private struct CombinedHistoryDay: Identifiable {
-        let day: String
-        let periodEnd: String
-        let keys: Int
-        let kpm: Double?
-        var id: String { day }
-    }
-
-    private var combinedHistoryDays: [CombinedHistoryDay] {
-        Dictionary(grouping: model.history, by: \.day).map { day, rows in
-            let intervals = rows.reduce(0.0) { $0 + $1.estimatedIntervals }
-            let seconds = rows.reduce(0.0) { $0 + $1.estimatedSeconds }
-            let rules = Set(rows.flatMap { row in
-                row.rules.split(separator: ";").compactMap { entry in
-                    entry.trimmingCharacters(in: .whitespaces).split(separator: "@").first.map(String.init)
-                }
-            })
-            let rate = rows.allSatisfy { $0.rejectedRows == 0 } && rules.count <= 1 && intervals >= 4 && seconds >= 0.5 ? 60 * intervals / seconds : nil
-            return CombinedHistoryDay(day: day, periodEnd: rows.map(\.periodEnd).filter { !$0.isEmpty }.max() ?? day,
-                                      keys: rows.reduce(0) { $0 + $1.estimatedKeys }, kpm: rate)
-        }.sorted { $0.day > $1.day }
+        .accessibilityLabel(L("全部输入语言合并的估算 WPM 趋势，%@", historyGranularityLabel))
     }
 
     private var combinedHistoryTable: some View {
         VStack(alignment: .leading, spacing: 9) {
             Text(L("合并统计（估算）")).font(.headline).foregroundStyle(AppStyle.estimated)
-            Text(L("合并全部记录语言的数量与间隔；KPM 按实际时长加权，不连接跨语言停顿。"))
+            Text(L("合并全部输入语言的数量与间隔；WPM 和 KPM 按实际时长加权，不连接中断之间的停顿。"))
                 .font(.caption).foregroundStyle(.secondary)
             Grid(alignment: .leading, horizontalSpacing: 24, verticalSpacing: 9) {
                 GridRow {
                     Text(historyPeriodColumn)
                     Text(L("合并敲键数量"))
+                    Text(L("平均速度（估算 WPM）"))
                     Text(L("合并 KPM"))
                 }.font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                ForEach(combinedHistoryDays) { day in
+                ForEach(historyRows.reversed()) { day in
                     GridRow {
                         Text(historyPeriod(day.day)).help(L("%@ 至 %@", day.day, day.periodEnd.isEmpty ? day.day : day.periodEnd))
-                        Text(compactKeystrokeCount(day.keys)).help(day.keys.formatted())
-                        Text(cadence(day.kpm))
+                        Text(compactKeystrokeCount(day.estimatedKeys)).help(day.estimatedKeys.formatted())
+                        Text(primaryCadence(day.estimatedWPM, unit: .wpm, includeUnit: false))
+                        Text(cadence(day.estimatedKPM))
                             .help(L("新旧计数规则并存时不合并速度；当前速度会从更新后重新采样。"))
                     }.font(.callout).monospacedDigit()
                 }
             }
-            Divider().padding(.vertical, 5)
-            Text(L("分语言明细")).font(.headline)
         }
-    }
-
-    private var historyTable: some View {
-        ScrollView(.horizontal) {
-            Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 10) {
-                GridRow {
-                    Text(historyPeriodColumn)
-                    Text(L("输入语言"))
-                    Text(L("主要速度 · 接入路径"))
-                    Text(L("按键折算 WPM（全局估算）"))
-                    Text(L("KPM（该语言估算）"))
-                    Text(L("敲键数量（估算）"))
-                }.font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                Divider().gridCellColumns(6)
-                ForEach(model.history.sorted(by: { $0.day == $1.day ? $0.language < $1.language : $0.day > $1.day })) { day in
-                    GridRow {
-                        Text(historyPeriod(day.day)).help(L("%@ 至 %@", day.day, day.periodEnd.isEmpty ? day.day : day.periodEnd))
-                        Text(model.languageName(day.language))
-                        Text(primaryCadence(day.primaryRate, unit: day.primaryUnit))
-                        Text(primaryCadence(day.estimatedWPM, unit: .wpm))
-                        Text(cadence(day.estimatedKPM))
-                        Text(compactKeystrokeCount(day.estimatedKeys)).help(day.estimatedKeys.formatted())
-                    }.font(.callout).monospacedDigit()
-                }
-            }.fixedSize(horizontal: true, vertical: false)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var editor: some View {
@@ -556,7 +485,7 @@ struct StatisticsView: View {
                 method(L("只累计观察到的间隔"), L("同一输入段里 n 次有效操作产生 n−1 个可测间隔。时长等于末次与首次操作的时间差；停止输入不会追加等待时间。命令、导航、焦点切换、权限中断和长停顿会切段。"))
                 method(L("自适应段落，保留真实时间"), L("使用有界近期间隔样本的中位数与 MAD 估计节奏，并识别新的稳定慢速候选。阈值只判断是否连续；接受的间隔完整计时。系数是可验证的启发式，不代表最佳识别精度。"))
                 method(L("辅助节奏与编辑"), L("辅助 KPM = 60 × 段内有效间隔数 ÷ 段内真实秒数，包含已接受的组合与编辑过程。删除另计，不视为新增文字或错误。“文字敲键 KPM”只连接文字输入，编辑会切断这一指标。"))
-                method(L("主要速度与语言"), L("全局主要速度对各输入语言统一使用按键折算 WPM = 输入过程 KPM ÷ 5，包含组合与编辑，不代表实际词数或汉字数。真实提交路径保留实际 CPM。输入源语言变化会切段，历史估算 WPM 按语言独立汇总，不与真实 CPM 叠加。"))
+                method(L("统一的估算速度"), L("全部输入语言合并统计，统一使用按键折算 WPM = 输入过程 KPM ÷ 5，包含组合与编辑，不代表实际词数或汉字数。历史按周期合并间隔数量与真实时长，不直接平均不同语言的速度；中断仍切断计时。真实提交路径的 CPM 仅用于验证，不与全局估算 WPM 叠加。"))
                 method(L("真实字符 CPM 的时间口径"), L("字符按真实提交的扩展字素簇计数。一条被接受且具备提交覆盖证据的输入间隔，使用其末端操作实际提交的全部字符数与该间隔真实时长；批量上屏按整批字符计数。首个事件的提交只增加累计字符，不凭空生成速率。组合或编辑没有提交时字符增量为零，其有效过程时间仍计入分母。不能把逐键 n−1 修正机械套到字符数。"))
                 method(L("样本与停止"), L("最近速度至少需要 4 个有效间隔与 0.5 秒覆盖时长；短段与孤立输入仍保留累计。CPM 的分母仅使用真实提交路径覆盖的间隔。停止后数值冻结并标为最近已停止，等待不增加时长，也不会拉低速度。"))
                 method(L("快捷键与未知用途"), L("Command／Control 组合键与已识别的命令、导航会排除并切段。已接入文本区还使用实际命令回调识别用途。纯全局元数据无法识别所有自定义快捷键；证据不足或用途不明时保持未知，不宣称完整识别。"))
@@ -629,11 +558,11 @@ private struct MetricCard: View {
                 }
                 Divider()
                 if isGlobal {
-                    metricRow(todayAverageIsPartial ? L("今日平均（当前口径）") : L("今日平均速度"), primaryCadence(todayAverageWPM, unit: .wpm))
+                    metricRow(L("今日平均速度"), primaryCadence(todayAverageWPM, unit: .wpm))
                     if todayAverageIsPartial {
-                        Text(L("均速仅含当前口径 · %@ 次敲键", compactKeystrokeCount(todayAverageCoveredKeys)))
+                        Text(L("平均速度基于 %@ 次敲键", compactKeystrokeCount(todayAverageCoveredKeys)))
                             .font(.caption).foregroundStyle(.secondary)
-                            .help(L("今日均速使用当前统计口径的 %@ 次敲键；累计数量保留全部口径。", todayAverageCoveredKeys.formatted()))
+                            .help(L("平均速度基于 %@ 次敲键；部分旧记录使用不同的计数方式，未纳入平均值，累计数量仍保留。", todayAverageCoveredKeys.formatted()))
                     }
                 } else {
                     metricRow(L("今日主要速度（当前语言）"), primaryCadence(metric.todayPrimaryRate, unit: metric.primaryUnit))
@@ -677,37 +606,21 @@ struct SettingsView: View {
                     Text("中文").tag("zh-Hans")
                     Text("English").tag("en")
                 }
-                Text(L("要记录的输入语言")).font(.callout)
-                Toggle(L("统计所有输入语言"), isOn: Binding(get: { model.monitorAllLanguages }, set: model.setMonitorAllLanguages))
-                if !model.monitorAllLanguages {
-                    ForEach(model.availableInputLanguages, id: \.id) { option in
-                        Toggle(option.name, isOn: Binding(
-                            get: { model.monitoredLanguages.contains(option.id) },
-                            set: { model.setMonitoredLanguage(option.id, enabled: $0) }
-                        ))
-                    }
-                    if model.monitoredLanguages.isEmpty {
-                        Text(L("未选择任何语言，统计已停止"))
-                            .font(.callout).foregroundStyle(.orange)
-                    }
-                }
-                Text(L("当前输入语言：%@", model.currentInputLanguage))
-                    .font(.caption).foregroundStyle(.secondary)
-                Text(L("依据键盘或输入法的语言筛选，不分析文字内容。中文输入法内直接输入英文仍归中文输入源。"))
+                Text(L("输入统计合并全部语言；App 语言只影响界面显示。"))
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section(L("运行")) {
                 Toggle(L("登录时启动 Keytempo"), isOn: Binding(get: { model.launchAtLogin }, set: { model.setLogin($0) }))
                 Picker(L("菜单栏显示"), selection: $model.menuDisplay) {
                     Text(L("输入时 WPM，空闲时今日敲键数")).tag("hybrid")
-                    Text(L("主要速度（统一估算 WPM／接入路径 CPM）")).tag("speed")
+                    Text(L("主要速度（估算 WPM）")).tag("speed")
                     Text(L("敲键节奏 KPM")).tag("kpm")
                     Text(L("今日敲键数量")).tag("count")
                     Text(L("仅图标")).tag("icon")
                 }
                 .onChange(of: model.menuDisplay) { _ in model.applySettings() }
                 if model.menuDisplay == "hybrid" {
-                    Text(L("输入时显示实时估算 WPM；候选、停打、暂停或统计不可用时显示今日敲键数。约每秒更新，等待不计入输入时长。"))
+                    Text(L("输入和预热时保持 WPM，样本不足显示 — WPM；确认停打后显示 — WPM 三秒，再显示今日敲键数。暂停或权限失效等情况立即显示数量。约每秒更新，等待不计入输入时长。"))
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 HStack {

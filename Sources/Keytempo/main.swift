@@ -69,9 +69,10 @@ import TypingCore
         guard let statusItem else { return }
         var title = "⌨"
         if model.menuDisplay == "hybrid" {
-            if let wpm = model.hybridMenuWPM {
-                title += " ≈\(wpm.formatted(.number.precision(.fractionLength(0)))) WPM"
-            } else {
+            switch model.hybridMenuDisplay {
+            case .wpm(let value):
+                title += value.map { " ≈\($0.formatted(.number.precision(.fractionLength(0)))) WPM" } ?? " — WPM"
+            case .count:
                 title += " ≈\(compactKeystrokeCount(model.dailyEstimate.keys))"
                 if model.isPaused { title += " Ⅱ" }
             }
@@ -88,10 +89,10 @@ import TypingCore
             if model.phase == "idle", value != nil { title += " ·" }
         }
         if statusItem.button?.title != title { statusItem.button?.title = title }
-        var tooltip = L("Keytempo · %@ · %@ · 当前输入段约每秒更新。停止后保留最近值，等待不计时。WPM 为按键折算估算；CPM 需要真实提交字符。KPM 可在设置中选择。", L(model.status), model.currentInputLanguage)
+        var tooltip = L("Keytempo · %@ · %@ · 输入速度约每秒更新。停止后保留最近值，等待不计时。WPM 为按键折算估算；KPM 可在设置中选择。", L(model.status), L("合并全部输入语言"))
         if model.menuDisplay == "hybrid" {
-            tooltip = L("Keytempo · %@ · %@", L(model.status), model.currentInputLanguage)
-            tooltip += "\n" + L("输入时显示实时估算 WPM；候选、停打、暂停或统计不可用时显示今日敲键数。约每秒更新，等待不计入输入时长。")
+            tooltip = L("Keytempo · %@ · %@", L(model.status), L("合并全部输入语言"))
+            tooltip += "\n" + L("输入和预热时保持 WPM，样本不足显示 — WPM；确认停打后显示 — WPM 三秒，再显示今日敲键数。暂停或权限失效等情况立即显示数量。约每秒更新，等待不计入输入时长。")
         }
         if model.menuDisplay == "count" || model.menuDisplay == "hybrid" { tooltip += "\n" + L("敲键数量为其他 App 中的日常输入估算；快捷键不计入。") }
         statusItem.button?.toolTip = tooltip

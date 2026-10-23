@@ -133,6 +133,59 @@ struct HistoryAggregationTests {
         checkEqual(buckets.first { $0.evidence == .confirmed }?.keys, 5)
     }
 
+    @Test func combinedLanguagesUseObservedWeightedIntervalsWithoutCreatingRowBoundaryIntervals() {
+        for granularity in [HistoryGranularity.day, .week, .month] {
+            let buckets = HistoryAggregation.aggregate([
+                row("2026-10-21", language: "en", seconds: 0.4),
+                row("2026-10-21", language: "zh", seconds: 2.0)
+            ], granularity: granularity, timeZone: utc, combineLanguages: true)
+            checkEqual(buckets.count, 1)
+            let bucket = buckets[0]
+            checkEqual(bucket.language, HistoryAggregation.combinedLanguage)
+            checkEqual(bucket.keys, 10)
+            checkEqual(bucket.intervals, 8) // Two five-key segments, not a fabricated nine-interval segment.
+            checkEqual(bucket.seconds, 2.4, accuracy: 1e-9)
+            checkEqual(bucket.kpm!, 200, accuracy: 1e-8)
+            checkEqual(bucket.estimatedWPM!, 40, accuracy: 1e-8)
+            checkNil(bucket.cpm)
+        }
+    }
+
+    @Test func combinedHistoryKeepsConfirmedCoverageAndRulesSeparateFromEstimatedWPM() {
+        let buckets = HistoryAggregation.aggregate([
+            row("2026-10-20", language: "en", seconds: 0.4),
+            row("2026-10-21", language: "zh", seconds: 2.0),
+            row("2026-10-21", language: "zh", evidence: .confirmed, rule: "adapter-old", seconds: 0.8,
+                characters: 13, ratedCharacters: 8, characterIntervals: 4, characterSeconds: 0.8),
+            row("2026-10-21", language: "und", evidence: .unknown)
+        ], granularity: .month, timeZone: utc, combineLanguages: true)
+        checkEqual(buckets.count, 2)
+        let estimate = buckets.first { $0.evidence == .probable }!
+        let confirmed = buckets.first { $0.evidence == .confirmed }!
+        checkEqual(estimate.keys, 10)
+        checkEqual(estimate.rules, Set(["adaptive"]))
+        checkEqual(estimate.estimatedWPM!, 40, accuracy: 1e-8)
+        checkNil(estimate.cpm)
+        checkEqual(confirmed.characters, 13)
+        checkEqual(confirmed.cpm!, 600, accuracy: 1e-8)
+        checkNil(confirmed.estimatedWPM)
+    }
+
+    @Test func combinedLanguagesPreserveUnknownSourceCountsAndSuppressIncompatibleGlobalRules() {
+        let buckets = HistoryAggregation.aggregate([
+            row("2026-10-20", language: "en", rule: "old"),
+            row("2026-10-21", language: "zh", rule: "current"),
+            row("2026-10-21", language: "und", rule: "current", keys: 1, intervals: 0, seconds: 0)
+        ], granularity: .month, timeZone: utc, combineLanguages: true)
+        checkEqual(buckets.count, 1)
+        checkEqual(buckets[0].keys, 11)
+        checkEqual(buckets[0].intervals, 8)
+        checkEqual(buckets[0].rules, Set(["old", "current"]))
+        checkTrue(buckets[0].hasMixedRules)
+        checkNil(buckets[0].kpm)
+        checkNil(buckets[0].estimatedWPM)
+    }
+
     @Test func mixedRulesRetainCountsButDoNotCreateAComparableSpeed() {
         let bucket = HistoryAggregation.aggregate([
             row("2026-10-20", rule: "old"), row("2026-10-21", rule: "new")
