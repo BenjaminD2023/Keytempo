@@ -220,6 +220,8 @@ enum AppLanguage {
         "运行": "General",
         "登录时启动 Keytempo": "Launch Keytempo at login",
         "菜单栏显示": "Menu bar display",
+        "输入时 WPM，空闲时今日敲键数": "Live WPM while typing, today's keys when idle",
+        "输入时显示实时估算 WPM；候选、停打、暂停或统计不可用时显示今日敲键数。约每秒更新，等待不计入输入时长。": "Shows live estimated WPM while typing, and today's key count while starting, stopped, paused, or unavailable. Updates about once a second; waiting never adds typing time.",
         "今日敲键数量": "Today's key count",
         "仅图标": "Icon only",
         "段落识别": "Burst detection",

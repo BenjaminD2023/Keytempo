@@ -699,12 +699,17 @@ struct SettingsView: View {
             Section(L("运行")) {
                 Toggle(L("登录时启动 Keytempo"), isOn: Binding(get: { model.launchAtLogin }, set: { model.setLogin($0) }))
                 Picker(L("菜单栏显示"), selection: $model.menuDisplay) {
+                    Text(L("输入时 WPM，空闲时今日敲键数")).tag("hybrid")
                     Text(L("主要速度（统一估算 WPM／接入路径 CPM）")).tag("speed")
                     Text(L("敲键节奏 KPM")).tag("kpm")
                     Text(L("今日敲键数量")).tag("count")
                     Text(L("仅图标")).tag("icon")
                 }
                 .onChange(of: model.menuDisplay) { _ in model.applySettings() }
+                if model.menuDisplay == "hybrid" {
+                    Text(L("输入时显示实时估算 WPM；候选、停打、暂停或统计不可用时显示今日敲键数。约每秒更新，等待不计入输入时长。"))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 HStack {
                     Text(L(model.status)).foregroundStyle(.secondary)
                     Spacer()

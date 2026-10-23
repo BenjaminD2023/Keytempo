@@ -18,13 +18,15 @@ The primary menu bar rate shows the **current input segment**, updating about on
 
 At least four accepted intervals and 0.5 seconds are needed to display a rate. A segment's first operation still counts toward totals. When input stops or a same-source focus/command boundary occurs, the last available estimated rate remains visible as recent/stopped, including when opening Keytempo to inspect it. The boundary still ends timing continuity; the next input does not bridge across it. Source changes, lost permissions and explicit resets clear incompatible samples. Waiting does not add typing time or reduce the measured rate.
 
+An optional **WPM while typing, today's keystrokes otherwise** menu bar mode shows live estimated WPM only while a continuous segment has enough fresh samples. During initial sampling, after input stops or at an interruption, it shows today's combined estimated keystroke count with K/M/B formatting. A retained recent/stopped rate does not keep this mode on WPM. The independent speed, KPM, count and icon modes remain available in Settings.
+
 The menu popup emphasizes the **past ten minutes' average estimated WPM**, with current speed below it and today's statistics retained. The ten-minute value combines accepted intervals across all recorded global input languages and divides their total interval count by their actual typing duration, then by five. It is not throughput over ten wall-clock minutes. The rolling window is session-only; the UI reports shorter observed coverage after launch, resume or reset. Idle waiting adds no typing time, although an old interval can leave the rolling window after ten minutes. A bounded-buffer coverage failure suppresses the rate rather than presenting a partial sample as complete.
 
 The daily overview and menu popup show one **estimated keystroke counter** for everyday input in other apps, combining all recorded languages. Today's average estimated WPM and secondary weighted KPM also combine languages, using the current counting rule. When older rules coexist, all quantities remain visible and the average's partial coverage is explicit. Current segment speed still follows the current input source. Shortcut and context filtering remain active, and spaces are excluded from the global counter and KPM. Large counts use at most three numeric digits with K/M/B suffixes (for example, `1.49K`); hover to see the full integer. History includes combined count/KPM summaries and per-language estimated WPM. Its chart plots only global estimated WPM for the selected language; actual confirmed CPM stays in the separate integrated-path table and is never overlaid on the WPM chart. Confirmed-editor details remain on the Validation tab and in raw CSV exports.
 
 ## Features
 
-- Current menu bar speed, a ten-minute average in the popup, daily average/totals, pause/resume and optional launch at login.
+- Current menu bar speed or WPM while typing with today's count otherwise, a ten-minute average in the popup, daily average/totals, pause/resume and optional launch at login.
 - English and Simplified Chinese app interfaces, independent of input-source language.
 - Select which input languages to record; selecting none stops recording.
 - Per-language 7-day, 30-day, 90-day, one-year and five-year history, separate KPM columns and CSV export.
@@ -58,7 +60,7 @@ Choose **Check for Updates…** in the app menu or Settings to check manually, t
 
 The 0.1.1 app (original app/tag `1.1.1`) does not contain an updater; install the first updater-enabled release manually once. Updates do not grant privacy permissions, bypass macOS approval or convert global Chinese keystrokes into confirmed CPM. Certificate signing and download signatures protect different parts of the update process. See [release instructions](docs/RELEASING.md) for publisher setup and known signing limits.
 
-Keytempo now uses `0.x` versions: historical `1.1.0` and `1.2.0` are documented as `0.1.0` and `0.2.0`; the latest public release is `0.3.0`, while the `0.3.1` fixes are under local validation. Existing signed `1.x` downloads and tags retain their original identifiers. Internal build numbers continue increasing, so `0.3.0` build 11 is newer for the updater than `1.2.1` build 10. See the [complete changelog and version mapping](CHANGELOG.md).
+Keytempo uses `0.x` versions: historical `1.1.0` and `1.2.0` are documented as `0.1.0` and `0.2.0`. The `0.3.1` release uses build 14 and adds Chinese input recovery and the optional typing/count menu mode. Existing signed `1.x` downloads and tags retain their original identifiers. Internal build numbers continue increasing, so `0.3.1` build 14 is newer for the updater than `1.2.1` build 10. See the [complete changelog and version mapping](CHANGELOG.md).
 
 ## Build and test
 

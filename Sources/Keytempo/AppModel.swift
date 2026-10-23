@@ -129,6 +129,29 @@ struct HistoryDay: Identifiable {
     var selectedMenuSpeed: MenuSpeedDisplay {
         MenuSpeedDisplay(metric: selectedMenuMetric, evidence: recentEvidence, forceKPM: menuDisplay == "kpm")
     }
+    /// Hybrid presentation uses observed operation rhythm on the same estimated
+    /// five-operation WPM scale for every language, including the local adapter.
+    /// A nil value means show today's merged global-estimate key count instead.
+    var hybridMenuWPM: Double? {
+        let contextAvailable = recentEvidence == .confirmed
+            ? !ownedAdapterExcluded && NSApp.isActive && (NSApp.keyWindow?.firstResponder is ConfirmedTextView)
+            : globalPresentationCapabilitiesAvailable
+        return hybridMenuWPMIfAvailable(capabilitiesAvailable: contextAvailable && InputLanguages.policy.allows(languageCode: currentInputLanguageCode),
+                                        source: InputLanguages.current)
+    }
+    /// The explicit availability/source inputs let native checks exercise this
+    /// live-only policy without depending on macOS permissions or changing IMEs.
+    fileprivate func hybridMenuWPMIfAvailable(capabilitiesAvailable: Bool, source: InputLanguages.Source) -> Double? {
+        guard capabilitiesAvailable, phase == "typing", !isPaused, !sleeping, !clearing,
+              !recentSpeedIsFrozen, recentPresentationValid, presentedInputSource == source,
+              recentEvidence != .unknown else { return nil }
+        // Published metrics can still describe the previous segment until the
+        // next UI tick. Check the engine without advancing or changing timing.
+        let snapshot = engine.snapshot(now: ProcessInfo.processInfo.systemUptime)
+        let metric = recentEvidence == .confirmed ? snapshot.confirmed : snapshot.probable
+        guard snapshot.phase == .typing, metric.recentLanguage == currentInputLanguageCode else { return nil }
+        return TypingRate.estimatedWPM(fromKPM: metric.recentRhythmKPM)
+    }
     @Published private(set) var recentSpeedIsFrozen = false
     var selectedSpeedIsRecent: Bool {
         selectedMenuSpeed.value != nil && (recentSpeedIsFrozen || phase == "idle")
@@ -897,6 +920,7 @@ struct HistoryDay: Identifiable {
     } catch { failures.append("FAIL: clear/quit regression: \(error.localizedDescription)") }
     failures += runCurrentMenuChecks()
     failures += runFrozenSpeedVisibilityChecks()
+    failures += runHybridMenuChecks()
     failures += runCombinedEstimateChecks()
     failures += runRollingEstimateChecks()
     failures += runHistoryProjectionChecks()
@@ -1034,6 +1058,106 @@ struct HistoryDay: Identifiable {
     expect(AppModel.rule(3) == "adaptive-v4-no-space-ime-quality-on-max3.0" && AppModel.rule(3, chineseKeyboardCompatibility: true).hasSuffix("-ime-fallback"),
            "Chinese keyboard fallback has a separate rule without rewriting ordinary history")
     model.flushBeforeExit()
+    return failures
+}
+
+/// The hybrid label must fall back to the existing daily quantity as soon as a
+/// live sample ends, even when the ordinary speed mode retains a recent result.
+@MainActor private func runHybridMenuChecks() -> [String] {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Keytempo-hybrid-check-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let model = AppModel(dataDirectory: directory, monitoringEnabled: false)
+    model.isPaused = false; model.menuDisplay = "hybrid"
+    model.excludedAppsText = ""; model.updateExclusions()
+    let chinese = InputLanguages.Source(identifier: "test.pinyin", modeIdentifier: "pinyin", name: "Pinyin", languageCode: "zh", inputMethod: true)
+    let english = InputLanguages.Source(identifier: "test.abc", modeIdentifier: "", name: "ABC", languageCode: "en", inputMethod: false)
+    let now = ProcessInfo.processInfo.systemUptime, date = Date()
+    var failures = [String]()
+    func expect(_ value: @autoclosure () -> Bool, _ name: String) { if !value() { failures.append("FAIL: hybrid menu \(name)") } }
+    func live(_ source: InputLanguages.Source? = nil, available: Bool = true) -> Double? {
+        model.hybridMenuWPMIfAvailable(capabilitiesAvailable: available, source: source ?? chinese)
+    }
+    func type(_ offsets: [Double], context: UInt64 = 991, language: String = "zh", evidence: Evidence = .probable) {
+        for offset in offsets {
+            model.receiveConfirmedInput(ClassifiedInput(time: now + offset, date: date.addingTimeInterval(offset), context: context,
+                                                       category: .textEntry, evidence: evidence,
+                                                       source: evidence == .probable ? .global : .adapter,
+                                                       operationID: UInt64((offset * 1000).rounded()), language: language,
+                                                       committedCharacters: evidence == .confirmed ? 2 : nil))
+        }
+        model.refreshSnapshot()
+    }
+    model.updateInputSource(chinese)
+    type([0])
+    expect(live() == nil && model.dailyEstimate.keys == 1 && model.dailyEstimate.seconds == 0, "single-key candidate uses count without a fabricated speed or duration")
+    type([0.2, 0.4, 0.6, 0.8])
+    expect(abs((live() ?? 0) - 60) < 1e-3 && model.dailyEstimate.keys == 5 && abs(model.dailyEstimate.seconds - 0.8) < 1e-6,
+           "five Chinese keys show current 60 WPM using four observed intervals")
+    let firstQuantity = model.dailyEstimate
+    expect(live(available: false) == nil && live(english) == nil, "unavailable capabilities or changed source immediately use count")
+    model.isPaused = true
+    expect(live() == nil, "paused mode uses today's count")
+    model.isPaused = false
+    expect(model.dailyEstimate == firstQuantity, "availability and pause checks do not add count or timing")
+    for (index, reason) in ["快捷命令", "焦点已变化", "前台应用已变化", "光标导航", "未知输入上下文"].enumerated() {
+        if index > 0 {
+            let start = Double(index) * 10
+            type((0..<5).map { start + Double($0) * 0.2 }, context: UInt64(991 + index))
+        }
+        let quantity = model.dailyEstimate
+        model.handleMonitoringInterruption(reason, capabilitiesAvailable: true, source: chinese)
+        expect(live() == nil, "\(reason) never presents the retained rate as live before the next UI tick")
+        model.refreshSnapshot()
+        expect(live() == nil && model.selectedSpeedIsRecent && model.dailyEstimate == quantity,
+               "\(reason) falls back to unchanged count while ordinary speed stays clearly recent")
+    }
+    type([50], context: 1001)
+    expect(live() == nil, "restart candidate does not revive a frozen rate")
+    type([50.2, 50.4, 50.6, 50.8], context: 1001)
+    expect(abs((live() ?? 0) - 60) < 1e-3, "fresh restart sample resumes live WPM")
+    model.updateInputSource(english); model.refreshSnapshot()
+    expect(live(english) == nil, "language change uses count until a fresh sample")
+    type([60, 60.2, 60.4, 60.6, 60.8], context: 1002, language: "en")
+    expect(abs((live(english) ?? 0) - 60) < 1e-3 && model.dailyEstimate.keys == 35,
+           "English live WPM and combined daily quantity survive language switching")
+    for mode in ["speed", "kpm", "count", "icon"] {
+        model.menuDisplay = mode
+        let expected = model.selectedMenuSpeed
+        model.menuDisplay = "hybrid"; model.menuDisplay = mode
+        expect(model.selectedMenuSpeed == expected, "existing \(mode) mode selection is unchanged")
+    }
+    model.handleMonitoringInterruption("快捷命令", capabilitiesAvailable: true, source: english)
+    for offset in [65.0, 65.2, 65.4] {
+        model.receiveConfirmedInput(ClassifiedInput(time: now + offset, date: date.addingTimeInterval(offset), context: 1005,
+                                                   category: .textEntry, evidence: .probable, source: .global, language: "en"))
+        expect(live(english) == nil, "restart candidate and insufficient samples cannot reuse the previous published speed before a UI tick")
+    }
+    model.refreshSnapshot()
+    model.updateInputSource(chinese); model.refreshSnapshot()
+    type([70, 70.2, 70.4, 70.6, 70.8], context: 1003, evidence: .confirmed)
+    expect(abs((live() ?? 0) - 60) < 1e-3 && abs((model.confirmed.cpm ?? 0) - 600) < 1e-3,
+           "confirmed adapter uses estimated operation WPM rather than committed-character CPM")
+    model.interruptConfirmed()
+    expect(live() == nil, "leaving the confirmed input context uses count immediately")
+    model.flushBeforeExit()
+
+    let idleDirectory = directory.appendingPathComponent("idle")
+    let idleModel = AppModel(dataDirectory: idleDirectory, monitoringEnabled: false)
+    idleModel.isPaused = false; idleModel.excludedAppsText = ""; idleModel.updateExclusions()
+    idleModel.updateInputSource(chinese)
+    for index in 0..<5 {
+        let offset = -30 + Double(index) * 0.2
+        idleModel.receiveConfirmedInput(ClassifiedInput(time: now + offset, date: date.addingTimeInterval(offset), context: 1004,
+                                                       category: .textEntry, evidence: .probable, source: .global, language: "zh"))
+    }
+    idleModel.refreshSnapshot()
+    let idleQuantity = idleModel.dailyEstimate
+    expect(idleModel.phase == "idle" && idleModel.hybridMenuWPMIfAvailable(capabilitiesAvailable: true, source: chinese) == nil,
+           "natural idle uses count even when a prior sample remains available")
+    idleModel.refreshSnapshot()
+    expect(idleModel.dailyEstimate == idleQuantity && idleQuantity.keys == 5 && abs(idleQuantity.seconds - 0.8) < 1e-6,
+           "idle refresh does not accumulate waiting time or alter today's count")
+    idleModel.flushBeforeExit()
     return failures
 }
 

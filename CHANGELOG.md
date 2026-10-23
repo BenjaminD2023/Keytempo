@@ -13,10 +13,19 @@ The project changed its public version convention before the `0.3.0` release. Hi
 | 0.2.0 | 1.2.0 / `v1.2.0` | 9 | Original public release |
 | 0.2.1 | 1.2.1 / `v1.2.1` | 10 | Original public release |
 | 0.3.0 | 0.3.0 / `v0.3.0` | 11 | First release with the normalized app version |
+| 0.3.1 | 0.3.1 / `v0.3.1` | 14 | Chinese input recovery and hybrid menu display |
 
 Already published signed archives, source tags and download URLs retain their original `1.x` identifiers. Their changelog labels are normalized; their embedded app versions have not been rewritten. New releases use `0.x` app versions and tags. The internal build number continues increasing, so Sparkle can offer `0.3.0` (build 11) to apps displaying `1.2.0` (build 9) or `1.2.1` (build 10).
 
 ## [Unreleased]
+
+## [0.3.1] - 2026-10-23
+
+### Added
+
+- Add a menu bar mode that shows live estimated WPM while a continuous input segment has enough fresh samples, and today's combined estimated keystrokes otherwise. Candidate, stopped and interrupted input falls back to the count with the existing K/M/B formatting; the separate speed, KPM, count and icon modes remain available.
+- Add an opt-in Chinese IME keyboard-activity compatibility mode for apps whose focused-editor metadata is unavailable. It is off by default. A fresh frontmost-app/source lease is required; known noneditable controls, mode editors, app/language exclusions, permissions and existing shortcut/space/repeat/synthetic filters remain enforced. This mode may include unrecognized non-text activity and never supplies Chinese character counts or CPM. Its aggregates use a separate `-ime-fallback` rule.
+- Add optional content-free diagnostics for the focus-query route, AX error stages, and context-confirmed replay/discard counts. The temporary context queue is limited to 64 event summaries and 350 milliseconds, with explicit loss on expiry or interruption.
 
 ### Fixed
 
@@ -27,12 +36,7 @@ Already published signed archives, source tags and download URLs retain their or
 - Recheck noneditable focus metadata on later input events with a short lease, even when an application accepts focus-notification registration, so missing descendant notifications cannot keep a stale exclusion for thirty seconds.
 - Preserve an existing probable Chinese composition state when `=`, `-`, `[` or `]` pages candidates, so subsequent candidate selection is not lost. These keys retain their ordinary text meaning outside that bounded state; spaces remain excluded from global counts.
 
-### Added
-
-- Add an opt-in Chinese IME keyboard-activity compatibility mode for apps whose focused-editor metadata is unavailable. A fresh frontmost-app/source lease is required; known noneditable controls, mode editors, app/language exclusions, permissions and existing shortcut/space/repeat/synthetic filters remain enforced. This mode may include unrecognized non-text activity and never supplies Chinese character counts or CPM. Its aggregates use a separate `-ime-fallback` rule.
-- Add optional content-free diagnostics for the focus-query route, AX error stages, and context-confirmed replay/discard counts. The temporary context queue is limited to 64 event summaries and 350 milliseconds, with explicit loss on expiry or interruption.
-
-Global Chinese speed remains an estimate on the same WPM scale as other languages. A physical ChatGPT test produced accepted estimated input and a usable rate, while the tested WeChat version supplied no focused-editor evidence. Compatibility-mode physical coverage in WeChat remains pending; scripted metadata checks do not establish support for every app or Chinese input path.
+Global Chinese speed remains an estimate on the same WPM scale as other languages. A physical ChatGPT test produced accepted estimated input and a usable rate. The tested WeChat 4.1.15 version supplied no focused-editor evidence; with compatibility mode explicitly enabled, physical System Pinyin input on the maintainer Mac produced counted keystrokes and a usable estimated WPM, and the aggregates were saved. This verifies those observed paths, not coverage or error rates for every app or Chinese input method.
 
 ## [0.3.0] - 2026-10-22
 
@@ -136,7 +140,8 @@ Originally local `1.1.0` builds; no separate public release archive was publishe
 - Separate global estimates from a real confirmed editor adapter, with adaptive segment timing and local aggregate storage.
 - Establish core, persistence and application integration tests and document the limits of real-world input and resource validation.
 
-[Unreleased]: https://github.com/BenjaminD2023/Keytempo/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/BenjaminD2023/Keytempo/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/BenjaminD2023/Keytempo/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/BenjaminD2023/Keytempo/compare/v1.2.1...v0.3.0
 [0.2.1]: https://github.com/BenjaminD2023/Keytempo/compare/v1.2.0...v1.2.1
 [0.2.0]: https://github.com/BenjaminD2023/Keytempo/compare/v1.1.1...v1.2.0
