@@ -1,4 +1,14 @@
-import Foundation
+import AppKit
+
+/// Explicit width avoids AppKit recomputing a smaller inactive-state cell.
+/// Hybrid mode reserves the same space for both speed and idle count titles.
+enum StatusItemPresentation {
+    static let font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+    static func width(for title: String, mode: String) -> CGFloat {
+        let candidates = mode == "hybrid" ? [title, "⌨ ≈999 WPM", "⌨ ≈999Qi Ⅱ"] : [title]
+        return ceil(candidates.map { ($0 as NSString).size(withAttributes: [.font: font]).width }.max()! + 18)
+    }
+}
 
 /// At most three numeric digits, using fixed Latin magnitude suffixes in every
 /// UI language. Full integer counts remain available in the underlying metric.
@@ -50,6 +60,15 @@ func runDisplayFormattingChecks() -> [String] {
         let actual = compactKeystrokeCount(count)
         if actual != expected { failures.append("FAIL: compact count \(count): expected \(expected), got \(actual)") }
         if actual.filter(\.isNumber).count > 3 { failures.append("FAIL: compact count exceeds three numeric digits: \(actual)") }
+    }
+    let idleWidth = StatusItemPresentation.width(for: "⌨ ≈506", mode: "hybrid")
+    let typingWidth = StatusItemPresentation.width(for: "⌨ ≈85 WPM", mode: "hybrid")
+    if idleWidth != typingWidth { failures.append("FAIL: hybrid idle title must retain speed-mode width") }
+    for title in ["⌨ ≈506", "⌨ ≈999 WPM", "⌨ ≈9.22Qi Ⅱ", "⌨ — WPM", "⌨ Ⅱ"] {
+        let measured = (title as NSString).size(withAttributes: [.font: StatusItemPresentation.font]).width
+        if StatusItemPresentation.width(for: title, mode: "hybrid") < ceil(measured) + 16 {
+            failures.append("FAIL: status item clips title: \(title)")
+        }
     }
     return failures
 }

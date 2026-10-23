@@ -61,7 +61,7 @@ final class ActivityStoreTests {
         #expect(try db.queryHourly(since: hour, until: hour.addingTimeInterval(3600)).isEmpty)
         #expect(try db.querySessions(since: hour, until: hour.addingTimeInterval(3600)).isEmpty)
         #expect(try db.activityCoverageStart() == nil)
-        #expect(try scalar("PRAGMA user_version", at: url) == "3")
+        #expect(try scalar("PRAGMA user_version", at: url) == "5")
         #expect(try scalar("SELECT value FROM unrelated", at: url) == "preserved")
     }
 
@@ -174,15 +174,15 @@ final class ActivityStoreTests {
         #expect(totals.keys == 4 && abs(totals.intervals - 3) < 1e-6 && abs(totals.seconds - 1.2) < 1e-6)
     }
 
-    @Test func migrationCollisionRollsBackAndFutureVersionFourIsRejected() throws {
+    @Test func migrationCollisionRollsBackAndFutureVersionSixIsRejected() throws {
         for newer in [false, true] {
             let url = location(); defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
-            // Build a valid v3 fixture first, then simulate an older/newer declaration.
+            // Build a valid fixture first, then simulate an older/newer declaration.
             do { _ = try AggregateStore(url: url, now: hour, timeZone: utc) }
             if newer {
-                try execute("PRAGMA user_version=4", at: url)
+                try execute("PRAGMA user_version=6", at: url)
                 #expect(throws: (any Error).self) { try AggregateStore(url: url, now: self.hour, timeZone: self.utc) }
-                #expect(try scalar("PRAGMA user_version", at: url) == "4")
+                #expect(try scalar("PRAGMA user_version", at: url) == "6")
             } else {
                 try execute("PRAGMA user_version=2", at: url)
                 #expect(throws: (any Error).self) { try AggregateStore(url: url, now: self.hour, timeZone: self.utc) }
@@ -213,9 +213,9 @@ final class ActivityStoreTests {
         let epoch = hour.timeIntervalSince1970
         try execute("""
             WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<5001)
-            INSERT INTO activity_hourly SELECT \(epoch),\(epoch + 3600),'GMT','v4','app.'||x,1,0,0,0 FROM n;
+            INSERT INTO activity_hourly (bucket_start,bucket_end,timezone,rule,application_id,keys,intervals,seconds,squared_interval_seconds) SELECT \(epoch),\(epoch + 3600),'GMT','v4','app.'||x,1,0,0,0 FROM n;
             WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<5001)
-            INSERT INTO activity_sessions SELECT 'session.'||x,\(epoch),\(epoch),'GMT','v4',1,0,0,0,'idle' FROM n;
+            INSERT INTO activity_sessions (id,start_time,end_time,timezone,rule,keys,intervals,seconds,squared_interval_seconds,end_reason) SELECT 'session.'||x,\(epoch),\(epoch),'GMT','v4',1,0,0,0,'idle' FROM n;
             """, at: url)
         do {
             _ = try db.queryHourly(since: hour, until: hour.addingTimeInterval(3600), includeApplications: true)

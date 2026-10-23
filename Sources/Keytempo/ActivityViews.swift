@@ -111,11 +111,12 @@ struct ActivityView: View {
                     ProgressView(L("正在加载活动…")).frame(maxWidth: .infinity, minHeight: 180)
                 } else if model.activityError == nil {
                     summary
-                    scoreDetails
+                    RewardDashboard(model: model)
                     hourlyTimeline
                     sessions
                     appBreakdown
-                    scoreHistory
+                    RewardHistory(model: model)
+                    DisclosureGroup(L("旧版评分（practice-v1，满分 100）")) { legacyScoreHistory }
                 }
                 Text(L("活动详情从 0.4.0 开始记录；旧版每日汇总不会被补造成小时或会话。这里只统计全局估算输入，验证输入区不计入。"))
                     .font(.caption).foregroundStyle(.secondary)
@@ -157,18 +158,18 @@ struct ActivityView: View {
         GroupBox {
             HStack(alignment: .top, spacing: 28) {
                 VStack(alignment: .leading, spacing: 7) {
-                    Label(L("打字评分"), systemImage: "chart.line.uptrend.xyaxis").font(.headline)
+                    Label(L("练习积分"), systemImage: "chart.line.uptrend.xyaxis").font(.headline)
                     HStack(alignment: .firstTextBaseline, spacing: 5) {
-                        Text(activityValue(rateTotals.score?.value)).font(.system(size: 38, weight: .semibold)).monospacedDigit()
-                        Text("/ 100").foregroundStyle(.secondary)
+                        Text(rewardPointText(model.selectedRewardDay?.components.total)).font(.system(size: 38, weight: .semibold)).monospacedDigit()
                     }
-                    Text(rateTotals.score == nil ? L("节奏样本不足") : L("速度与练习投入并重"))
+                    Text(model.selectedRewardDay == nil ? L("旧版／未覆盖") : L("只累加已获得的积分"))
                         .font(.caption).foregroundStyle(.secondary)
                 }.frame(minWidth: 160, alignment: .leading)
                 Grid(alignment: .leading, horizontalSpacing: 30, verticalSpacing: 17) {
                     GridRow {
                         ActivityMetric(label: L("平均速度（估算 WPM）"), value: rateTotals.wpm.map { "≈\(activityValue($0)) WPM" } ?? "— WPM")
-                        ActivityMetric(label: L("节奏稳定度"), value: activityValue(rateTotals.consistency) + " / 100")
+                        ActivityMetric(label: L("每秒节奏稳定度"), value: activityValue(rateTotals.consistency) + " / 100",
+                                       detail: L("%@ 个完整一秒样本 · %@ 个已接受间隔", rateTotals.rateConsistency.count.formatted(), rateTotals.rateConsistency.intervals.formatted()))
                     }
                     GridRow {
                         ActivityMetric(label: L("实际打字时长"), value: activityDuration(totals.seconds))
@@ -176,31 +177,6 @@ struct ActivityView: View {
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }.padding(12)
-        }
-    }
-
-    private var scoreDetails: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if partialRates {
-                Text(L("速度、稳定度与评分基于 %@ 次敲键；数量与时长保留全部记录。", compactKeystrokeCount(rateTotals.keys)))
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            HStack(alignment: .top, spacing: 24) {
-                ScoreComponent(label: L("速度"), value: rateTotals.score?.speed, target: L("100 WPM 达到此项上限"), color: .orange)
-                ScoreComponent(label: L("稳定度"), value: rateTotals.score?.consistency, target: L("按已接受间隔的变异程度计算"), color: .teal)
-                ScoreComponent(label: L("打字时长"), value: rateTotals.score?.duration, target: L("30 分钟达到此项上限"), color: .blue)
-                ScoreComponent(label: L("输入量"), value: rateTotals.score?.volume, target: L("10,000 次敲键达到此项上限"), color: .purple)
-            }
-            Text(L("四项各占 25%，取平均得到评分；额外的实际打字时长和敲键量也会提高评分。它是个人练习指数，不是标准化技能测试或准确率。"))
-                .font(.caption).foregroundStyle(.secondary)
-            DisclosureGroup(L("评分与稳定度怎么算？")) {
-                VStack(alignment: .leading, spacing: 7) {
-                    Text(L("速度项 = min(WPM ÷ 100, 1) × 100；时长项 = min(实际秒数 ÷ 1,800, 1) × 100；输入量项 = min(敲键数 ÷ 10,000, 1) × 100。"))
-                    Text(L("稳定度 = 100 ÷ (1 + CV)，CV 是已接受按键间隔的标准差 ÷ 平均间隔。更接近的间隔通常得到更高稳定度；这不表示文字正确，也不能识别所有宏。"))
-                    Text(L("评分与稳定度至少需要 20 个有效间隔、2 秒实际打字时长。等待、快捷键和被过滤的事件不增加这些样本或练习时长。"))
-                    Text(L("同一天的评分使用合并后的原始数量、时长与间隔统计重算，不直接平均小时或会话评分。评分公式版本：practice-v1。"))
-                }.font(.caption).foregroundStyle(.secondary).padding(.top, 8)
-            }.font(.callout)
         }
     }
 
@@ -223,7 +199,7 @@ struct ActivityView: View {
                 ScrollView(.horizontal) {
                     Grid(alignment: .leading, horizontalSpacing: 28, verticalSpacing: 10) {
                         GridRow {
-                            Text(L("小时")); Text(L("敲键数量")); Text(L("实际打字时长")); Text(L("平均速度（估算 WPM）"))
+                            Text(L("小时")); Text(L("敲键数量")); Text(L("实际打字时长")); Text(L("平均速度（估算 WPM）")); Text(L("练习积分"))
                         }.font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                         ForEach(hours) { hour in
                             GridRow {
@@ -231,11 +207,14 @@ struct ActivityView: View {
                                 Text(compactKeystrokeCount(hour.totals.keys))
                                 Text(activityDuration(hour.totals.seconds))
                                 Text(activityValue(hour.compatible ? hour.totals.wpm : nil))
+                                Text(rewardPointText(model.rewardPoints(hour: hour.start)))
                             }.font(.callout).monospacedDigit()
                         }
                     }.padding(.vertical, 4)
                 }
                 Text(L("空白小时表示没有记录。跨小时的已接受间隔按实际覆盖比例分配，速度按间隔总数与总时长加权；混合计数方式的小时不显示速度。"))
+                    .font(.caption).foregroundStyle(.secondary)
+                Text(L("积分使用固定奖励时区的已发贡献；与历史小时边界不一致时显示 —，不伪造重新分配。"))
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -247,12 +226,12 @@ struct ActivityView: View {
             Text(L("连续五分钟没有接受到输入，或暂停、睡眠、退出、跨日等边界，会结束一个会话。会话经过时间与实际打字时长分别展示。"))
                 .font(.caption).foregroundStyle(.secondary)
             if model.activitySessions.isEmpty {
-                ActivityEmptyState(title: L("这一天还没有输入会话"), detail: L("单次敲键也会保留；样本不足的会话不生成速度或评分。"))
+                ActivityEmptyState(title: L("这一天还没有输入会话"), detail: L("单次敲键保留数量和基础积分；速度需要更多间隔。"))
             } else {
                 ScrollView(.horizontal) {
                     Grid(alignment: .leading, horizontalSpacing: 22, verticalSpacing: 11) {
                         GridRow {
-                            Text(L("开始 — 最后输入")); Text(L("经过时间")); Text(L("实际打字时长")); Text(L("敲键数量")); Text("WPM"); Text(L("稳定度")); Text(L("评分"))
+                            Text(L("开始 — 最后输入")); Text(L("经过时间")); Text(L("实际打字时长")); Text(L("敲键数量")); Text("WPM"); Text(L("每秒稳定度")); Text(L("练习积分"))
                         }.font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                         ForEach(Array(model.activitySessions.sorted { $0.start > $1.start }.prefix(200))) { session in
                             GridRow {
@@ -261,8 +240,13 @@ struct ActivityView: View {
                                 Text(activityDuration(session.totals.seconds))
                                 Text(compactKeystrokeCount(session.totals.keys))
                                 Text(activityValue(session.totals.wpm))
-                                Text(activityValue(session.totals.consistency))
-                                Text(activityValue(session.totals.score?.value))
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(activityValue(session.totals.consistency))
+                                    Text(L("%@ 秒样本", session.totals.rateConsistency.count.formatted()))
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                                .help(L("%@ 个完整一秒样本 · %@ 个已接受间隔", session.totals.rateConsistency.count.formatted(), session.totals.rateConsistency.intervals.formatted()))
+                                Text(rewardPointText(model.rewardPoints(sessionID: session.id)))
                             }.font(.callout).monospacedDigit()
                         }
                     }.padding(.vertical, 4)
@@ -312,7 +296,7 @@ struct ActivityView: View {
         }
     }
 
-    private var scoreHistory: some View {
+    private var legacyScoreHistory: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label(L("近 30 天练习评分"), systemImage: "chart.bar.xaxis").font(.headline)
             Text(L("截止所选日期；仅显示样本足够且计数方式一致的日期，不补造缺失天数。"))
@@ -341,10 +325,12 @@ struct ActivityView: View {
 private struct ActivityMetric: View {
     let label: String
     let value: String
+    var detail: String? = nil
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(label).font(.caption).foregroundStyle(.secondary)
             Text(value).font(.title3.weight(.medium)).monospacedDigit().lineLimit(1).minimumScaleFactor(0.75)
+            if let detail { Text(detail).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
         }.frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
     }

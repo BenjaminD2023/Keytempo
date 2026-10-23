@@ -26,31 +26,52 @@ The menu popup emphasizes the **past ten minutes' average estimated WPM**, with 
 
 The daily overview and menu popup show one **estimated keystroke counter** for everyday input in other apps. Current speed, today's average estimated WPM and secondary weighted KPM combine accepted input across all languages. The average is labeled **Today's average**. If some older records were counted differently, the UI shows how many keystrokes the average uses and explains the excluded records in help; all quantities remain in the total. Shortcut and context filtering remain active, and spaces are excluded from the global counter and KPM. Large counts use at most three numeric digits with K/M/B suffixes (for example, `1.49K`); hover to see the full integer. History shows a combined estimated WPM chart and one table with combined quantities, WPM and separate KPM. Confirmed-editor character metrics stay on the Validation tab and in raw CSV exports, separate from the global WPM trend.
 
-## Activity and Typing Score
+## Activity, Typing Score and XP
 
-The **Activity** tab adds a date-selectable hourly timeline, automatic session summaries, rhythm consistency and a 30-day Typing Score trend. Hours show accepted keystrokes, actual typing time and weighted estimated WPM. A session groups accepted input until a five-minute gap or a pause, sleep, quit, day, timezone or counting-rule boundary; its elapsed span is separate from typing time. Focus and source interruptions still break measurable intervals, so session grouping never fills those gaps with typing time. Single-keystroke sessions remain visible without an invented speed.
+The **Activity** tab provides a date-selectable hourly timeline, automatic sessions, separate speed/consistency trends, and a 30-day earned-score chart. Hours show accepted keystrokes, actual typing time and weighted estimated WPM. Sessions group activity until a five-minute gap or a pause, sleep, quit, day, timezone or counting-rule boundary; elapsed span remains separate from measured typing time. Focus/source interruptions never become extra typing time.
 
-**Typing Score** is a personal practice index from 0 to 100. Each component contributes 25%, so more accepted input and more time actually spent typing can outweigh a modest speed difference:
+**Typing Score accumulates practice points in 0.4.1.** It replaces the primary 0–100 score. For each reward day, the base is:
 
-| Component | Component score (0–100) |
-|---|---|
-| Speed | `min(estimated WPM / 100, 1) × 100` |
-| Consistency | `100 / (1 + CV)`, where CV is accepted-interval standard deviation divided by its mean |
-| Typing time | `min(actual typing seconds / 1,800, 1) × 100` |
-| Volume | `min(accepted keystrokes / 10,000, 1) × 100` |
+```text
+60 × log1p(actual typing seconds / 3600)
++ 60 × log1p(accepted keystrokes / 15000)
+```
 
-The score is the mean of these four components (`practice-v1`). Consistency and scoring require at least 20 accepted intervals and two seconds of typing; insufficient data shows no score. The 100 WPM, 30-minute and 10,000-key references are transparent product choices, not scientific population norms. This index does not measure accuracy or certify typing skill. A steadier pattern is not proof of intentional input, and the existing filters cannot recognize every macro or determine arbitrary text's meaning.
+Only the incremental contribution is awarded as new input arrives. Early progress is approximately one point per measured minute and one point per 250 accepted keys; daily marginal returns gradually decrease without a hard cap. A single accepted key earns volume progress without invented time. Daily, seven-day and lifetime scores sum actual awards; pauses, slower typing, app switches and missed days never remove earned points.
 
-Daily and hourly WPM are `60 × summed accepted-interval counts / summed typing seconds / 5`. Consistency is recomputed from aggregate timing moments, and daily scores are recomputed from the merged totals rather than averaged from session scores. Incompatible counting methods do not silently blend: affected hour/app rates and daily trend scores are withheld, while a daily summary identifies a current-method subset when needed. Waiting, shortcuts and excluded events earn no typing time or score.
+Quality bonuses settle in canonical **100-key blocks**, with the final partial block settled at the reward-day boundary. Incomplete blocks survive relaunch. The speed bonus is at most 25% of block base points; the consistency bonus is at most 15%. Both use their own evidence coverage, rather than treating every key as a measured interval. Pending bonuses are excluded from earned totals. Hour/session bonus attribution follows each block's base-point contributions, rather than restarting the daily logarithmic curves.
 
-**Store per-app activity locally** is optional and off by default, available in Activity and Settings. Enabling it saves only bundle identifiers and activity aggregates; names are resolved locally for display. Turning it off stops new app-specific collection and hides its details. Existing app details can be separately cleared with confirmation, retaining combined totals and sessions. No input text, clipboard, window titles, URLs, key sequences or individual interval sequences are saved. Consistency needs only counts, durations and the sum of squared intervals.
+Consistency uses **Monkeytype-style completed one-second operation rates and the Kogasa mapping**, not raw inter-key-gap regularity. Reward consistency first normalizes each uninterrupted run/block fragment, then combines its rate CV² using covered-interval weights; different steady run speeds do not automatically count as inconsistency. A fragment needs ten usable intervals and two complete samples; the combined bonus needs ten samples, twenty covered intervals and two covered seconds. Trailing partial seconds and idle time add no samples. Missing evidence remains unavailable, not zero consistency. The independent consistency trend uses pooled per-second rate moments and separately reports its coverage; it can differ from the context-adjusted bonus. Neither is an accuracy measure or directly comparable with a Monkeytype test.
 
-These finer details start recording with 0.4.0. Existing daily history survives the additive database migration, but cannot reconstruct old hours, sessions or consistency. Select a day within the retained five years to inspect recorded details; the score trend covers the 30 days ending on that selection and omits missing or insufficient days. Only global estimated input contributes; typing in the confirmed validation editor stays separate.
+For 100 accepted keys with 99 intervals of 0.2 seconds, base points are about **0.727768376954296**. There are 19 complete rate samples covering 94 intervals, so `qW = 0.99`, `qC = 0.94`, and the finalized score is about **0.9293458663450304**. See [the complete scoring policy](docs/SCORING.md) for formulas, coverage gates, and this fixture.
+
+**XP is independent of score:** one whole XP for every **300 measured typing seconds**, one for every **2,000 accepted keys**, and five for each newly verified personal-improvement milestone. Remainders carry across days and restarts. Thirty minutes plus 5,000 keys earns 8 XP; sixty minutes plus 10,000 keys earns 17 XP. There is no score-to-XP conversion, absolute-speed multiplier, streak penalty or daily XP cap.
+
+Improvement tracks use normalized language/input-method metadata and compatible measurement policies, without requiring per-app collection. Speed and consistency calibrate independently: at least five qualifying completed days and sixty measured minutes; each qualifying context day needs five minutes. Baselines then freeze. Verification uses the latest seven qualifying completed days after calibration, requiring three days and thirty measured minutes, with both the pooled estimate and at least three daily estimates meeting the milestone. Every relative **+5% speed** or absolute **+5 consistency points** earns 5 XP once. A verified 40→44 WPM gain and 100→110 gain each earn 10 XP. Unknown consistency creates no baseline; incompatible policy changes retain the award lineage and conservatively suspend improvement awards.
+
+Levels use exact whole-XP thresholds, with no fixed maximum:
+
+| Current level | XP to the next level |
+|---|---:|
+| 1–3 | 10 |
+| 4 | 20 |
+| 5–19 | 30 |
+| 20–29 | 50 |
+| 30–49 | 100 |
+| 50+ | 200 |
+
+Level 10 requires 200 lifetime XP; levels 20, 30, 40, 50 and 60 require exactly 500, 1,000, 2,000, 3,000 and 5,000 XP. At 520 XP, you are Level 20 with 20/50 XP toward Level 21 and 30 XP remaining. XP balances are exact integers; compact threshold labels such as `1k` are used only when exact.
+
+**Coverage and durability:** the new `score-v2`, `xp-v1`, `improvement-v1` and `levels-v1` systems start on first activation after upgrading to 0.4.1. Existing history and `practice-v1` information remain legacy and separate; no historical points, XP, blocks or baselines are invented. Reward days use a timezone fixed at activation, so an OS timezone change does not reset the daily budget. Batched checkpoints save measurements, rewards, partial blocks and deduplication state atomically; retries retain stable identities. Normal saves are coalesced about every thirty seconds, without interrupting a live run. Unsaved input can be lost on a crash; delayed/failed writes can leave more than thirty seconds unsaved. Relaunch ends timing continuity. Genuine evidence arriving after settlement adds an identified base adjustment instead of rewriting a finalized bonus. Candidate idle resolution releases complete blocks without creating waiting time. Capacity-triggered saves wait until all contributions from the current accepted event are ready, and failed payloads retry unchanged. Hourly point values show unavailable when activity-hour boundaries differ from the fixed reward timezone.
+
+**Store per-app activity locally** remains optional and off by default. Only bundle identifiers and aggregates are saved when enabled; score and improvement do not require app identities. Clearing app details or pruning retained detailed history preserves lifetime rewards, XP remainders and claimed milestones. **Delete all data** also deletes progression and baselines. The separate rewards CSV exposes components, XP sources, award identities, coverage and policies. No text, clipboard, titles, URLs, key sequences, interval logs or per-second sequences are stored.
+
+Hourly/session/app details begin with 0.4.0 recording; new rate consistency and rewards begin with 0.4.1 coverage. Existing daily history survives additive migrations. Uncovered dates are labeled legacy or omitted from new-system charts rather than displayed as zero achievement. Only accepted global estimates contribute; the confirmed validation editor remains separate.
 
 ## Features
 
 - Current menu bar speed or WPM while typing with today's count otherwise, a ten-minute average in the popup, daily average/totals, pause/resume and optional launch at login.
-- Hourly activity, automatic session summaries, optional local per-app activity, rhythm consistency and a multi-factor Typing Score.
+- Hourly activity, automatic sessions, optional local per-app activity, Monkeytype-style consistency, accumulating Typing Score, independent XP and exact levels.
 - English and Simplified Chinese app interfaces, independent of input-source language.
 - Combined input statistics across all accepted languages, without recorded-language selection.
 - Combined 7-day, 30-day, 90-day, one-year and five-year history, separate KPM columns and CSV export.
@@ -58,7 +79,7 @@ These finer details start recording with 0.4.0. Existing daily history survives 
 - A real `NSTextView` validation path for composition, editing and character-commit coverage.
 - Check for Updates, manual download/install and optional automatic checks/downloads through Sparkle.
 
-History uses daily periods for ranges up to 90 days, weekly periods for one year and monthly periods for five years. Rates combine accepted interval counts and actual covered duration across languages, never by averaging daily or language speeds. Existing per-language rows remain saved and are combined when history is read; there is no destructive database rewrite. Evidence and incompatible counting methods remain separate. Long ranges load from SQLite when opened or selected, without a once-per-second database poll or a larger startup cache. Only previously saved history is shown; selecting five years does not reconstruct missing past activity. Startup retention keeps up to five calendar years and 50,000 aggregate rows. Closing history releases its loaded rows.
+History uses daily periods for ranges up to 90 days, weekly periods for one year and monthly periods for five years. Rates combine accepted interval counts and actual covered duration across languages, never by averaging daily or language speeds. Existing per-language rows remain saved and are combined when history is read; there is no destructive database rewrite. Evidence and incompatible counting methods remain separate. Long ranges load from SQLite when opened or selected, without a once-per-second database poll or a larger startup cache. Only previously saved history is shown; selecting five years does not reconstruct missing past activity. Input history retention keeps up to five calendar years and 50,000 daily aggregate rows. Reward lifetime state, daily earned totals and milestone claims are independent of detailed-history pruning. Closing history releases its loaded rows.
 
 ## Install
 
@@ -84,7 +105,7 @@ Choose **Check for Updates…** in the app menu or Settings to check manually, t
 
 The 0.1.1 app (original app/tag `1.1.1`) does not contain an updater; install the first updater-enabled release manually once. Updates do not grant privacy permissions, bypass macOS approval or convert global Chinese keystrokes into confirmed CPM. Certificate signing and download signatures protect different parts of the update process. See [release instructions](docs/RELEASING.md) for publisher setup and known signing limits.
 
-Keytempo uses `0.x` versions: historical `1.1.0` and `1.2.0` are documented as `0.1.0` and `0.2.0`. Version `0.4.0` uses build 16 and adds activity analytics and the multi-factor practice score. Version `0.3.2` build 15 combined language metrics and clarified the menu's WPM display. Version `0.3.1` build 14 introduced Chinese input recovery and the optional typing/count menu mode; its tag and downloads are preserved. Existing signed `1.x` downloads and tags also retain their original identifiers. Internal build numbers continue increasing for updater compatibility. Release notes describe the current version's changes; the [complete changelog and version mapping](CHANGELOG.md) retains the full history.
+Keytempo uses `0.x` versions: historical `1.1.0` and `1.2.0` are documented as `0.1.0` and `0.2.0`. Version `0.4.1` uses build 17 and adds accumulating score, independent XP/levels and verified personal improvement. Version `0.4.0` build 16 introduced activity analytics and the legacy practice score. Version `0.3.2` build 15 combined language metrics and clarified the menu's WPM display. Version `0.3.1` build 14 introduced Chinese input recovery and the optional typing/count menu mode; its tag and downloads are preserved. Existing signed `1.x` downloads and tags also retain their original identifiers. Internal build numbers continue increasing for updater compatibility. Release notes describe the current version's changes; the [complete changelog and version mapping](CHANGELOG.md) retains the full history.
 
 ## Build and test
 

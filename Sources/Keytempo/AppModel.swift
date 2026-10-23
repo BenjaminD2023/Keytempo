@@ -7,6 +7,16 @@ import TypingStore
 
 // Read/written only on diskQueue; retained by the main actor until completion.
 private final class WriteReceipt: @unchecked Sendable { var succeeded: Bool? }
+private enum RewardFeedbackEvent { case level(Int, Int), improvement(Int) }
+
+/// One immutable checkpoint transaction. Retry it before newer work so a
+/// failed callback can never combine old deltas under a fresh batch identity.
+private struct MeasurementWrite: Sendable {
+    let id: String
+    let rows: [StoredAggregate]
+    var activity: ActivityBatch
+    let rewards: RewardWrite?
+}
 
 private struct HistorySelection: Equatable, Sendable {
     let days: Int
@@ -151,6 +161,18 @@ struct HistoryDay: Identifiable {
     @Published private(set) var activityError: String?
     @Published private(set) var activityActionError: String?
     @Published private(set) var activityCoverageStart: Date?
+    @Published private(set) var rewardState: RewardState?
+    @Published private(set) var rewardDays: [StoredRewardDay] = []
+    @Published private(set) var rewardAwards: [RewardAward] = []
+    @Published private var rewardFeedbackEvent: RewardFeedbackEvent?
+    var rewardFeedback: String? {
+        switch rewardFeedbackEvent {
+        case .level(let level, let gain): return L("达到等级 %@（提升 %@ 级）", level.formatted(), gain.formatted())
+        case .improvement(let xp): return L("进步已验证：+%@ XP", xp.formatted())
+        case nil: return nil
+        }
+    }
+    @Published private(set) var rewardError: String?
     @Published var activityDate = Date()
     @Published private(set) var perAppTrackingEnabled = UserDefaults.standard.bool(forKey: "perAppTrackingEnabled")
     var activityVisible = false
@@ -246,12 +268,23 @@ struct HistoryDay: Identifiable {
     private var pending: [String: StoredAggregate] = [:]
     private var inFlight: [String: StoredAggregate] = [:]
     private var activeReceipt: WriteReceipt?
+    private var inFlightWrite: MeasurementWrite?
+    private var retryWrite: MeasurementWrite?
+    private var rewardEngine: RewardEngine?
+    private var loadedRewardDays: [StoredRewardDay] = []
+    private var loadedRewardAwards: [RewardAward] = []
+    private var rewardReadOverlay: [String: RewardAward] = [:]
+    private var rewardExportURL: URL?
+    private var rewardExportRevision: Int64?
+    private var durableRewardRevision: Int64 = 0
     private let diskQueue = DispatchQueue(label: "local.keytempo.persistence", qos: .utility)
     private var uiTimer: Timer?
     private var windowExpiryWork: DispatchWorkItem?
     private var windowExpiryDeadline: Double?
     private var saveWork: DispatchWorkItem?
     private var retryCount = 0
+    private var processingInput = false
+    private var flushDeferred = false
     private var generation: UInt64 = 0
     private var clearing = false
     private var observers: [NSObjectProtocol] = []
@@ -309,6 +342,11 @@ struct HistoryDay: Identifiable {
             store = db
             let start = Self.day(Calendar.current.date(byAdding: .day, value: -30, to: Date())!)
             for row in try db.query(since: start) { cached[row.id] = row }
+            if let saved = try db.loadRewardState() {
+                rewardEngine = try RewardEngine(restoring: saved, now: Date())
+                durableRewardRevision = saved.revision
+            } else { rewardEngine = RewardEngine() }
+            rewardState = rewardEngine?.state
         } catch { storageError = error.localizedDescription }
         monitor.onInput = { [weak self] input in self?.receive(input) }
         monitor.onInterruption = { [weak self] reason in
@@ -356,6 +394,7 @@ struct HistoryDay: Identifiable {
             }
         })
         if !isPaused && monitoringEnabled { monitor.start() } else { status = "已暂停" }
+        if rewardEngine?.hasPendingChanges == true { scheduleSave(after: 30) }
         refreshSnapshot()
     }
     func receiveConfirmedInput(_ input: ClassifiedInput) {
@@ -370,6 +409,11 @@ struct HistoryDay: Identifiable {
     }
     private func receive(_ input: ClassifiedInput) {
         guard !isPaused, !sleeping, !clearing else { return }
+        processingInput = true
+        defer {
+            processingInput = false
+            if flushDeferred { flushDeferred = false; flush() }
+        }
         // Backwards event clocks cannot make an earlier session look recent.
         if let last = lastEstimatedInputTime, input.time < last { resetTenMinuteWindow() }
         let result = engine.recordWithIntervals(input)
@@ -378,6 +422,7 @@ struct HistoryDay: Identifiable {
                                              applicationID: input.applicationID,
                                              perAppEnabled: perAppTrackingEnabled && !clearingAppActivity)
         accumulateActivity(activity)
+        recordRewards(input, result: result)
         if input.source == .global && input.evidence == .probable && deltas.contains(where: { $0.keys > 0 }) {
             activitySessionDeadline = input.time + 300
             scheduleActivitySessionEnd()
@@ -488,6 +533,7 @@ struct HistoryDay: Identifiable {
     private func finishActivitySession(_ reason: String) {
         activitySessionWork?.cancel(); activitySessionWork = nil; activitySessionDeadline = nil
         accumulateActivity(activityTracker.finish(reason: reason))
+        rewardEngine?.interrupt(at: Date(), reason: reason)
     }
     func loadActivity(day: Date) {
         let selection = Calendar.current.startOfDay(for: day)
@@ -503,6 +549,8 @@ struct HistoryDay: Identifiable {
         activityLoadedHourly.removeAll(); activityLoadedSessions.removeAll()
         activityHourly.removeAll(); activitySessions.removeAll(); activityScoreDays.removeAll()
         appNameCache.removeAll()
+        loadedRewardDays.removeAll(); loadedRewardAwards.removeAll(); rewardAwards.removeAll()
+        rewardReadOverlay.removeAll()
     }
     private func startActivityReadIfPossible() {
         if activityVisible && activityReadRequested && store == nil {
@@ -516,13 +564,21 @@ struct HistoryDay: Identifiable {
         guard let end = calendar.date(byAdding: .day, value: 1, to: day),
               let start = calendar.date(byAdding: .day, value: -29, to: day) else { return }
         let token = activityReadToken, version = generation, applications = perAppTrackingEnabled
+        let rewardStart = rewardDayKey(start), rewardEnd = rewardDayKey(end), rewardSelection = rewardDayKey(activityDate)
         activityReadRequested = false; activityReadInFlight = true
         activityReadOverlay = pendingActivity
+        if let retryWrite { activityReadOverlay.merge(retryWrite.activity) }
+        rewardReadOverlay = Dictionary(((inFlightWrite?.rewards?.awards ?? []) + (retryWrite?.rewards?.awards ?? []) +
+                                       (rewardEngine?.unpersistedAwards ?? [])).map { ($0.id, $0) }, uniquingKeysWith: { _, b in b })
         diskQueue.async { [weak self] in
-            let result = Result { () -> ([HourlyActivity], [TypingSession], Date?) in
+            let result = Result { () -> ([HourlyActivity], [TypingSession], Date?, [StoredRewardDay], [RewardAward]) in
                 var hours = try store.queryHourly(since: start, until: end)
                 if applications { hours += try store.queryHourly(since: day, until: end, includeApplications: true) }
-                return (hours, try store.querySessions(since: day, until: end), try store.activityCoverageStart())
+                var rewards = Dictionary(try store.queryRewardAwards(day: rewardSelection).map { ($0.id, $0) }, uniquingKeysWith: { _, b in b })
+                for award in try store.queryRewardAwards(attributedSince: day, until: end) { rewards[award.id] = award }
+                return (hours, try store.querySessions(since: day, until: end), try store.activityCoverageStart(),
+                        try store.queryRewardDays(since: rewardStart, until: rewardEnd),
+                        Array(rewards.values))
             }
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
@@ -530,12 +586,17 @@ struct HistoryDay: Identifiable {
                 if self.activityVisible && !self.clearing && !self.clearingAppActivity &&
                     version == self.generation && token == self.activityReadToken && applications == self.perAppTrackingEnabled {
                     switch result {
-                    case let .success((hours, sessions, coverage)):
+                    case let .success((hours, sessions, coverage, rewardDays, rewardAwards)):
                         self.activityLoadedHourly = Dictionary(hours.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
                         self.activityLoadedSessions = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
                         self.mergeLoadedActivity(self.activityReadOverlay.batch)
                         self.activityCoverageStart = coverage ?? self.activityLoadedHourly.values.map(\.bucketStart).min()
                         self.activityError = nil
+                        self.loadedRewardDays = rewardDays
+                        var mergedAwards = Dictionary(rewardAwards.map { ($0.id, $0) }, uniquingKeysWith: { _, b in b })
+                        for award in self.rewardReadOverlay.values where self.isRewardAwardVisible(award) { mergedAwards[award.id] = award }
+                        self.loadedRewardAwards = Array(mergedAwards.values)
+                        self.publishRewards()
                     case let .failure(error):
                         self.activityLoadedHourly.removeAll(); self.activityLoadedSessions.removeAll()
                         self.activityError = error.localizedDescription
@@ -544,6 +605,7 @@ struct HistoryDay: Identifiable {
                     self.publishActivitySnapshot()
                 }
                 self.activityReadOverlay.removeAll()
+                self.rewardReadOverlay.removeAll()
                 self.startActivityReadIfPossible()
             }
         }
@@ -595,6 +657,8 @@ struct HistoryDay: Identifiable {
         activityActionError = nil
         pendingActivity.removeApplications()
         inFlightActivity.hourly.removeAll { !$0.applicationID.isEmpty }
+        inFlightWrite?.activity.hourly.removeAll { !$0.applicationID.isEmpty }
+        retryWrite?.activity.hourly.removeAll { !$0.applicationID.isEmpty }
         activityReadOverlay.removeApplications()
         activityLoadedHourly = activityLoadedHourly.filter { $0.value.applicationID.isEmpty }
         appNameCache.removeAll(); publishActivitySnapshot()
@@ -620,32 +684,145 @@ struct HistoryDay: Identifiable {
         appNameCache[identifier] = name
         return name
     }
-    func flush() {
-        saveWork?.cancel(); saveWork = nil
-        guard !clearing, activeReceipt == nil, !pending.isEmpty || !pendingActivity.isEmpty, let store else { return }
-        inFlight = pending; pending.removeAll(keepingCapacity: true)
-        inFlightActivity = pendingActivity.batch; pendingActivity.removeAll()
-        let rows = Array(inFlight.values), version = generation
-        let activity = inFlightActivity
-        let receipt = WriteReceipt(); activeReceipt = receipt
+    private func recordRewards(_ input: ClassifiedInput, result: StatisticsRecordResult) {
+        let context = ImprovementContext(language: input.language, inputMethodID: input.inputMethodID,
+                                         usesInputMethod: input.usesInputMethod, measurementPolicy: engine.config.ruleID)
+        rewardEngine?.record(input: input, result: result, context: context,
+                             sessionID: activityTracker.currentSession?.id,
+                             pendingIntervalCount: engine.pendingProbableIntervals)
+        if rewardEngine?.error != nil { rewardError = "奖励数据异常，已停止新增奖励；输入统计仍保留。请重新启动并重试。" }
+    }
+    func rewardDayKey(_ date: Date) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: rewardState?.progressionTimezone ?? "") ?? .current
+        let parts = calendar.dateComponents([.year, .month, .day], from: date)
+        return String(format: "%04d-%02d-%02d", parts.year!, parts.month!, parts.day!)
+    }
+    var selectedRewardDay: StoredRewardDay? { rewardDays.first { $0.day == rewardDayKey(activityDate) } }
+    var todayReward: RewardDayBudget? { rewardState.flatMap { $0.days[$0.currentDay] } }
+    private var recentRewardWeek: [RewardDayBudget] {
+        guard let state = rewardState else { return [] }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: state.progressionTimezone) ?? .current
+        let formatter = DateFormatter(); formatter.calendar = calendar; formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "yyyy-MM-dd"; formatter.locale = Locale(identifier: "en_US_POSIX")
+        let today = formatter.date(from: state.currentDay) ?? Date()
+        let start = rewardDayKey(calendar.date(byAdding: .day, value: -6, to: today) ?? today)
+        return state.days.values.filter { $0.day >= start && $0.day <= state.currentDay }
+    }
+    var weekRewardScore: Double { recentRewardWeek.reduce(0) { $0 + $1.components.total } }
+    var weekRewardXP: Int? {
+        var sum = 0
+        for day in recentRewardWeek {
+            let next = sum.addingReportingOverflow(day.xp.total)
+            guard !next.overflow else { return nil }; sum = next.partialValue
+        }
+        return sum
+    }
+    func rewardPoints(hour: Date? = nil, sessionID: String? = nil) -> Double? {
+        guard let state = rewardState, rewardDayKey(activityDate) >= rewardDayKey(state.coverageStart) else { return nil }
+        if let hour {
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = TimeZone(identifier: state.progressionTimezone) ?? .current
+            guard calendar.dateInterval(of: .hour, for: hour)?.start == hour else { return nil }
+        }
+        return rewardAwards.flatMap(\.attributions).filter {
+            (hour == nil || $0.hour == hour) && (sessionID == nil || $0.sessionID == sessionID)
+        }.reduce(0) { $0 + $1.components.total }
+    }
+    private func publishRewards() {
+        guard let state = rewardEngine?.state else { return }
+        if let prior = rewardState, let old = LevelProgress(totalXP: prior.xpProgress.totalXP),
+           let next = LevelProgress(totalXP: state.xpProgress.totalXP), next.level > old.level {
+            rewardFeedbackEvent = .level(next.level, next.level - old.level)
+        } else if let prior = rewardState, state.xpProgress.improvementXP > prior.xpProgress.improvementXP {
+            rewardFeedbackEvent = .improvement(state.xpProgress.improvementXP - prior.xpProgress.improvementXP)
+        }
+        if rewardState != state { rewardState = state }
+        var days = Dictionary(loadedRewardDays.map { ($0.day, $0) }, uniquingKeysWith: { _, b in b })
+        for day in state.days.values {
+            days[day.day] = StoredRewardDay(day: day.day, components: day.components, xp: day.xp)
+        }
+        let sorted = days.values.sorted { $0.day < $1.day }
+        if rewardDays != sorted { rewardDays = sorted }
+        var awards = Dictionary(loadedRewardAwards.map { ($0.id, $0) }, uniquingKeysWith: { _, b in b })
+        for award in (inFlightWrite?.rewards?.awards ?? []) + (retryWrite?.rewards?.awards ?? []) + (rewardEngine?.unpersistedAwards ?? []) {
+            awards[award.id] = award
+        }
+        let visible = activityVisible ? awards.values.filter { isRewardAwardVisible($0) }.sorted { $0.id < $1.id } : []
+        if rewardAwards != visible { rewardAwards = visible }
+    }
+    func exportRewards() {
+        let panel = NSSavePanel(); panel.nameFieldStringValue = "Keytempo-rewards.csv"
+        guard panel.runModal() == .OK, let url = panel.url, store != nil else { return }
+        rewardExportURL = url
+        let needsCheckpoint = !pending.isEmpty || !pendingActivity.isEmpty || rewardEngine?.hasPendingChanges == true
+        let revision = (rewardEngine?.state.revision ?? 0).addingReportingOverflow(needsCheckpoint ? 1 : 0)
+        guard !revision.overflow else { rewardError = "奖励数据异常，已停止新增奖励；输入统计仍保留。请重新启动并重试。"; return }
+        rewardExportRevision = revision.partialValue
+        flush(); finishRewardExportIfReady()
+    }
+    private func retainRewardAwards(_ awards: [RewardAward]) {
+        if activityReadInFlight { for award in awards { rewardReadOverlay[award.id] = award } }
+        guard activityVisible else { return }
+        var merged = Dictionary(loadedRewardAwards.map { ($0.id, $0) }, uniquingKeysWith: { _, b in b })
+        for award in awards where isRewardAwardVisible(award) { merged[award.id] = award }
+        loadedRewardAwards = Array(merged.values)
+    }
+    private func isRewardAwardVisible(_ award: RewardAward) -> Bool {
+        let start = Calendar.current.startOfDay(for: activityDate)
+        let end = Calendar.current.date(byAdding: .day, value: 1, to: start) ?? start.addingTimeInterval(86400)
+        return award.day == rewardDayKey(activityDate) || award.attributions.contains { $0.hour >= start && $0.hour < end }
+    }
+    private func finishRewardExportIfReady() {
+        guard let url = rewardExportURL, let target = rewardExportRevision, let store else { return }
+        guard durableRewardRevision >= target else {
+            if activeReceipt == nil && retryCount == 0 { flush() }
+            return
+        }
+        rewardExportURL = nil; rewardExportRevision = nil
         diskQueue.async { [weak self] in
-            let result = Result { try store.save(rows, activity: activity) }
+            do { try store.exportRewardCSV(since: .distantPast, until: .distantFuture).write(to: url, atomically: true, encoding: .utf8) }
+            catch { DispatchQueue.main.async { self?.storageError = "导出失败：\(error.localizedDescription)" } }
+        }
+    }
+    func flush() {
+        guard !processingInput else { flushDeferred = true; return }
+        saveWork?.cancel(); saveWork = nil
+        guard !clearing, activeReceipt == nil,
+              retryWrite != nil || !pending.isEmpty || !pendingActivity.isEmpty || rewardEngine?.hasPendingChanges == true,
+              let store else { return }
+        let payload: MeasurementWrite
+        if let retryWrite { payload = retryWrite }
+        else {
+            let rewards = rewardEngine?.error == nil ? rewardEngine?.checkpoint(at: Date()) : nil
+            payload = MeasurementWrite(id: UUID().uuidString, rows: Array(pending.values), activity: pendingActivity.batch, rewards: rewards)
+            pending.removeAll(keepingCapacity: true); pendingActivity.removeAll()
+        }
+        inFlight = Dictionary(payload.rows.map { ($0.id, $0) }, uniquingKeysWith: { _, b in b })
+        inFlightActivity = payload.activity; inFlightWrite = payload
+        retainRewardAwards(payload.rewards?.awards ?? [])
+        let version = generation, receipt = WriteReceipt(); activeReceipt = receipt
+        diskQueue.async { [weak self] in
+            let result = Result { try store.save(payload.rows, activity: payload.activity, progression: payload.rewards, batchID: payload.id) }
             if case .success = result { receipt.succeeded = true } else { receipt.succeeded = false }
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.generation == version else { return }
                 if case let .failure(error) = result {
-                    for row in self.inFlight.values {
-                        if self.pending[row.id] == nil { self.pending[row.id] = row } else { self.pending[row.id]!.merge(row) }
-                    }
-                    self.pendingActivity.merge(self.inFlightActivity)
-                    self.storageError = "保存失败：\(error.localizedDescription)"
-                    self.retryCount += 1
-                } else { self.storageError = nil; self.retryCount = 0 }
+                    self.retryWrite = self.inFlightWrite ?? payload
+                    self.storageError = "保存失败：\(error.localizedDescription)"; self.retryCount += 1
+                } else {
+                    if self.retryWrite?.id == payload.id { self.retryWrite = nil }
+                    self.storageError = nil; self.retryCount = 0
+                    self.durableRewardRevision = payload.rewards?.state.revision ?? self.durableRewardRevision
+                    self.retainRewardAwards(payload.rewards?.awards ?? [])
+                }
                 self.inFlight.removeAll(keepingCapacity: true)
-                self.inFlightActivity = ActivityBatch()
-                self.activeReceipt = nil
-                if (!self.pending.isEmpty || !self.pendingActivity.isEmpty) && self.retryCount <= 3 { self.scheduleSave(after: self.retryCount == 0 ? 30 : Double(self.retryCount * 10)) }
-                self.startActivityReadIfPossible()
+                self.inFlightActivity = ActivityBatch(); self.inFlightWrite = nil; self.activeReceipt = nil
+                if (self.retryWrite != nil || !self.pending.isEmpty || !self.pendingActivity.isEmpty || self.rewardEngine?.hasPendingChanges == true) && self.retryCount <= 3 {
+                    self.scheduleSave(after: self.retryCount == 0 ? 30 : Double(self.retryCount * 10))
+                }
+                self.publishRewards(); self.startActivityReadIfPossible(); self.finishRewardExportIfReady()
             }
         }
     }
@@ -657,28 +834,35 @@ struct HistoryDay: Identifiable {
                 for row in try restored.query(since: start) {
                     if cached[row.id] == nil { cached[row.id] = row } else { cached[row.id]!.merge(row) }
                 }
+                if let saved = try restored.loadRewardState() {
+                    rewardEngine = try RewardEngine(restoring: saved, now: Date()); durableRewardRevision = saved.revision
+                }
+                else { rewardEngine = RewardEngine() }
                 store = restored; storageError = nil
             } catch { storageError = error.localizedDescription; return }
         }
         retryCount = 0; flush(); startActivityReadIfPossible(); refreshSnapshot()
     }
     func flushBeforeExit() {
-        monitor.flushPendingInput()
-        finishActivitySession("appExit")
+        monitor.flushPendingInput(); finishActivitySession("appExit")
         stopUI(); windowExpiryWork?.cancel(); windowExpiryWork = nil; windowExpiryDeadline = nil
         saveWork?.cancel(); saveWork = nil; monitor.stop(); interruptEngine()
         if clearing { diskQueue.sync {}; return }
-        // Serial ordering guarantees a previous in-flight transaction completes first.
-        let rows = Array(pending.values), flightRows = Array(inFlight.values), receipt = activeReceipt, database = store
-        let activity = pendingActivity.batch, flightActivity = inFlightActivity
+        let rewards = rewardEngine?.error == nil ? rewardEngine?.checkpoint(at: Date()) : nil
+        let tail = MeasurementWrite(id: UUID().uuidString, rows: Array(pending.values), activity: pendingActivity.batch, rewards: rewards)
+        let flight = inFlightWrite, retry = retryWrite, receipt = activeReceipt, database = store
         diskQueue.sync {
-            if let database {
-                if receipt?.succeeded == false { try? database.save(flightRows, activity: flightActivity) }
-                try? database.save(rows, activity: activity)
-            }
+            guard let database else { return }
+            do {
+                if let flight, receipt?.succeeded == false {
+                    try database.save(flight.rows, activity: flight.activity, progression: flight.rewards, batchID: flight.id)
+                } else if flight == nil, let retry {
+                    try database.save(retry.rows, activity: retry.activity, progression: retry.rewards, batchID: retry.id)
+                }
+                try database.save(tail.rows, activity: tail.activity, progression: tail.rewards, batchID: tail.id)
+            } catch { fputs("Keytempo: final checkpoint failed: \(error.localizedDescription)\n", stderr) }
         }
-        pending.removeAll()
-        pendingActivity.removeAll()
+        pending.removeAll(); pendingActivity.removeAll()
     }
     func togglePause() {
         monitor.flushPendingInput()
@@ -806,6 +990,8 @@ struct HistoryDay: Identifiable {
     }
     private func interruptEngine(preservingRecentPresentation: Bool = false, preservingHybridActivity: Bool = false) {
         engine.interrupt()
+        activityTracker.interruptConsistency()
+        rewardEngine?.interrupt(at: Date())
         finishRecentPresentation(preserving: preservingRecentPresentation)
         if !preservingHybridActivity { hybridActivity.reset() }
         if !preservingRecentPresentation {
@@ -858,9 +1044,14 @@ struct HistoryDay: Identifiable {
         refreshSnapshot(at: ProcessInfo.processInfo.systemUptime)
     }
     fileprivate func refreshSnapshot(at now: Double) {
+        rewardEngine?.advance(to: Date())
         refreshTenMinuteWindow(at: now)
         let todayKey = Self.day()
+        let wasResolving = engine.completionPending
         engine.advance(to: now)
+        if wasResolving && !engine.completionPending { rewardEngine?.interrupt(at: Date(), reason: "idle-resolution") }
+        if rewardEngine?.hasPendingChanges == true && saveWork == nil && retryCount == 0 { scheduleSave(after: 30) }
+        publishRewards()
         captureCompletion()
         let snap = engine.snapshot(now: now)
         if diagnosticsEnabled && !pendingDiagnostics.isEmpty {
@@ -1079,6 +1270,13 @@ struct HistoryDay: Identifiable {
                     self.generation &+= 1; self.saveWork?.cancel(); self.saveWork = nil
                     self.pending.removeAll(); self.inFlight.removeAll()
                     self.activeReceipt = nil
+                    self.inFlightWrite = nil; self.retryWrite = nil
+                    self.rewardEngine = RewardEngine(); self.rewardState = self.rewardEngine?.state
+                    self.rewardFeedbackEvent = nil; self.rewardError = nil
+                    self.durableRewardRevision = 0; self.rewardExportURL = nil; self.rewardExportRevision = nil
+                    self.rewardReadOverlay.removeAll()
+                    self.loadedRewardDays.removeAll(); self.loadedRewardAwards.removeAll()
+                    self.rewardDays.removeAll(); self.rewardAwards.removeAll()
                     self.pendingActivity.removeAll(); self.inFlightActivity = ActivityBatch()
                     self.activityTracker = ActivityTracker()
                     self.activityReadOverlay.removeAll()
@@ -1179,10 +1377,109 @@ struct HistoryDay: Identifiable {
     failures += runRollingEstimateChecks()
     failures += runHistoryProjectionChecks()
     failures += AppModel.runActivityIntegrationChecks()
+    failures += AppModel.runRewardIntegrationChecks()
     return failures
 }
 
 private extension AppModel {
+    static func runRewardIntegrationChecks() -> [String] {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Keytempo-reward-check-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var failures: [String] = []
+        func expect(_ condition: @autoclosure () -> Bool, _ name: String) {
+            if !condition() { failures.append("FAIL: reward integration \(name)") }
+        }
+        func waitFor(_ condition: () -> Bool, _ name: String) {
+            let until = Date().addingTimeInterval(6)
+            while !condition() && Date() < until { RunLoop.current.run(until: Date().addingTimeInterval(0.01)) }
+            expect(condition(), name)
+        }
+        let base = Calendar.current.date(bySettingHour: 12, minute: 0, second: 0, of: Date())!
+        let monotonic = ProcessInfo.processInfo.systemUptime
+        func event(_ index: Int, start: Double = 0) -> ClassifiedInput {
+            let offset = start + Double(index) / 5
+            return ClassifiedInput(time: monotonic + offset, date: base.addingTimeInterval(offset), context: 7201,
+                                   category: .textEntry, evidence: .probable, source: .global,
+                                   language: "en", applicationID: "org.example.RewardEditor",
+                                   inputMethodID: "test.direct", usesInputMethod: false)
+        }
+        let model = AppModel(dataDirectory: directory, monitoringEnabled: false, perAppTracking: true)
+        model.isPaused = false
+        model.rewardEngine = RewardEngine(coverageStart: base); model.rewardState = model.rewardEngine?.state
+        model.loadActivity(day: base)
+        for i in 0..<60 { model.receive(event(i)) }
+        model.flush()
+        // Export requested behind a live write must include this newer prefix,
+        // not merely the transaction that was already in flight.
+        for i in 60..<100 { model.receive(event(i)) }
+        let export = directory.appendingPathComponent("rewards.csv")
+        model.rewardExportURL = export; model.rewardExportRevision = (model.rewardEngine?.state.revision ?? 0) + 1
+        model.finishRewardExportIfReady()
+        waitFor({ model.activeReceipt == nil && model.rewardExportURL == nil && FileManager.default.fileExists(atPath: export.path) },
+                "export barrier persists the requested prefix")
+        waitFor({ !model.activityLoading }, "activity reward read completes")
+        model.refreshSnapshot()
+        let score = model.rewardState?.lifetimeScore.total ?? 0
+        expect(abs(score - 0.9293458663450304) < 1e-6, "canonical100-key fixture agrees with UI state")
+        expect(model.rewardState?.xpProgress.eligibleKeys == 100 && model.rewardState?.xpProgress.totalXP == 0,
+               "XP counts accepted keys independently without early thresholds")
+        expect(abs((model.rewardState?.xpProgress.eligibleSeconds ?? 0) - 19.8) < 1e-6,
+               "only accepted measured intervals enter progression")
+        let session = model.activitySessions.first?.id
+        expect(abs((model.rewardPoints(sessionID: session) ?? 0) - score) < 1e-6,
+               "session award attribution survives successful checkpoint drain and async read")
+        model.loadActivity(day: base)
+        waitFor({ !model.activityLoading }, "award reload completes")
+        expect(abs((model.rewardPoints(sessionID: session) ?? 0) - score) < 1e-6,
+               "reloading does not duplicate or drop award attribution")
+        do {
+            let db = try AggregateStore(url: directory.appendingPathComponent("statistics.sqlite"))
+            let saved = try db.loadRewardState()
+            expect(saved?.xpProgress.eligibleKeys == 100, "export waited for the100-key checkpoint")
+            let csv = try String(contentsOf: export)
+            expect(csv.contains("score-v2") && csv.contains("xp-v1") && csv.contains("coverage"), "separate export exposes policies and coverage")
+        } catch { failures.append("FAIL: reward integration export: \(error.localizedDescription)") }
+        model.interruptEngine()
+        for i in 0..<30 { model.receive(event(i, start: 40)) }
+        model.flushBeforeExit()
+        let restarted = AppModel(dataDirectory: directory, monitoringEnabled: false, perAppTracking: false)
+        restarted.isPaused = false
+        let before = restarted.rewardEngine!.state
+        restarted.receive(event(0, start: 500))
+        restarted.refreshSnapshot()
+        expect(restarted.rewardState?.xpProgress.eligibleKeys == 131 && restarted.rewardState?.pendingBlockKeys == 31,
+               "incomplete100-key block survives restart")
+        expect(abs((restarted.rewardState?.xpProgress.eligibleSeconds ?? 0) - before.xpProgress.eligibleSeconds) < 1e-6,
+               "restart first key earns volume without bridging old timing")
+        restarted.clearAppActivity()
+        waitFor({ !restarted.clearingAppActivity }, "app-only clear completes")
+        expect(restarted.rewardEngine!.state.xpProgress.eligibleKeys == 131, "app-only deletion preserves global progression")
+        restarted.clearHistory()
+        waitFor({ !restarted.clearing }, "full clear completes")
+        expect(restarted.rewardState?.lifetimeScore.total == 0 && restarted.rewardState?.xpProgress.totalXP == 0 &&
+               restarted.durableRewardRevision == 0 && restarted.rewardReadOverlay.isEmpty,
+               "full clear resets progression, export barriers and claim state")
+        restarted.flushBeforeExit(); model.releaseActivity()
+
+        let capacity = AppModel(dataDirectory: directory.appendingPathComponent("capacity"), monitoringEnabled: false, perAppTracking: false)
+        capacity.isPaused = false; capacity.rewardEngine = RewardEngine(coverageStart: base)
+        let hour = Calendar.current.dateInterval(of: .hour, for: base)!
+        for index in 0..<512 {
+            let row = HourlyActivity(bucketStart: hour.start, bucketEnd: hour.end, timezone: TimeZone.current.identifier,
+                                     rule: "capacity-padding-\(index)")
+            capacity.pendingActivity.hourly[row.id] = row
+        }
+        capacity.receive(event(0))
+        if let batch = capacity.inFlightWrite {
+            expect(batch.rows.reduce(0) { $0 + $1.keys } == 1 &&
+                   batch.activity.hourly.filter { $0.applicationID.isEmpty }.reduce(0) { $0 + $1.totals.keys } == 1 &&
+                   batch.rewards?.state.xpProgress.eligibleKeys == 1,
+                   "capacity flush waits for every stream of the canonical event")
+        } else { failures.append("FAIL: reward integration capacity checkpoint missing") }
+        waitFor({ capacity.activeReceipt == nil }, "capacity checkpoint completes")
+        capacity.flushBeforeExit()
+        return failures
+    }
     /// Exercises asynchronous snapshots against a real isolated SQLite store.
     /// No events are posted, no global capture starts, and user prefs stay intact.
     static func runActivityIntegrationChecks() -> [String] {
@@ -1215,26 +1512,32 @@ private extension AppModel {
         // overlaid once, even when a later transaction persists them.
         type(0..<31)
         model.loadActivity(day: date)
-        type(31..<41)
+        type(31..<51)
         model.flush()
         waitFor({ !model.activityLoading && model.activeReceipt == nil }, "read/write completed")
         model.refreshSnapshot()
         var combined = model.activityHourly.filter { $0.applicationID.isEmpty }.reduce(into: RhythmTotals()) { $0.merge($1.totals) }
-        expect(combined.keys == 41 && abs(combined.intervals - 40) < 1e-6 && abs(combined.seconds - 8) < 1e-4,
+        expect(combined.keys == 51 && abs(combined.intervals - 50) < 1e-6 && abs(combined.seconds - 10) < 1e-4,
                "in-flight read overlay neither doubles nor drops deltas")
         expect(abs((combined.wpm ?? 0) - 60) < 1e-3 && combined.score != nil, "weighted WPM and sufficient score")
-        expect(model.activityHourly.contains { $0.applicationID == "org.example.CapturedEditor" && $0.totals.keys == 41 },
+        expect(combined.rateConsistency.count == 10 && combined.rateConsistency.intervals == 49 && combined.consistency == 100,
+               "complete second samples survive the asynchronous read/write overlay")
+        expect(combined.score?.consistency == combined.legacyIntervalConsistency,
+               "standalone rate consistency does not change the pending score formula")
+        let initialRateMoments = combined.rateConsistency
+        expect(model.activityHourly.contains { $0.applicationID == "org.example.CapturedEditor" && $0.totals.keys == 51 && $0.totals.rateConsistency == initialRateMoments },
                "original event application attributed")
-        expect(model.activitySessions.count == 1 && model.activitySessions.first?.totals.keys == 41,
+        expect(model.activitySessions.count == 1 && model.activitySessions.first?.totals.keys == 51 &&
+               model.activitySessions.first?.totals.rateConsistency == initialRateMoments,
                "one absolute session checkpoint")
         // A subsequent confirmed adapter lane must never enter practice stats.
         type(50..<55, source: .adapter)
         model.refreshSnapshot()
-        expect(model.activityHourly.filter { $0.applicationID.isEmpty }.reduce(0) { $0 + $1.totals.keys } == 41,
+        expect(model.activityHourly.filter { $0.applicationID.isEmpty }.reduce(0) { $0 + $1.totals.keys } == 51,
                "confirmed validation lane excluded")
         model.loadActivity(day: date.addingTimeInterval(-86400)); model.loadActivity(day: date)
         waitFor({ !model.activityLoading }, "latest date selection wins")
-        expect(model.activityHourly.filter { $0.applicationID.isEmpty }.reduce(0) { $0 + $1.totals.keys } == 41,
+        expect(model.activityHourly.filter { $0.applicationID.isEmpty }.reduce(0) { $0 + $1.totals.keys } == 51,
                "stale read cannot publish another day")
         type(60..<65); model.flush()
         model.clearAppActivity()
@@ -1246,11 +1549,15 @@ private extension AppModel {
             let start = Calendar.current.startOfDay(for: date), end = start.addingTimeInterval(86400)
             let rows = try database.queryHourly(since: start, until: end, includeApplications: true)
             combined = rows.filter { $0.applicationID.isEmpty }.reduce(into: RhythmTotals()) { $0.merge($1.totals) }
-            expect(rows.allSatisfy { $0.applicationID.isEmpty } && combined.keys == 51,
+            expect(rows.allSatisfy { $0.applicationID.isEmpty } && combined.keys == 61,
                    "app deletion survives in-flight saves and keeps combined totals")
+            expect(combined.rateConsistency.count >= initialRateMoments.count && combined.consistency != nil,
+                   "new consistency moments survive persistence and app-only deletion")
             let savedSessions = try database.querySessions(since: start, until: end)
-            expect(savedSessions.reduce(0) { $0 + $1.totals.keys } == 51,
+            expect(savedSessions.reduce(0) { $0 + $1.totals.keys } == 61,
                    "app-only deletion preserves sessions")
+            expect(savedSessions.reduce(into: RhythmTotals()) { $0.merge($1.totals) }.rateConsistency == combined.rateConsistency,
+                   "hourly and session rate moments agree after restart")
         } catch { failures.append("FAIL: activity integration store read: \(error.localizedDescription)") }
         model.clearHistory(); model.flush(); model.clearHistory(); model.flushBeforeExit()
         do {

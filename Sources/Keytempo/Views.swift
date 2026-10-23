@@ -100,6 +100,7 @@ struct MenuContent: View {
                         .help(L("平均速度基于 %@ 次敲键；部分旧记录使用不同的计数方式，未纳入平均值，累计数量仍保留。", model.todayAverageCoveredKeys.formatted()))
                 }
             }
+            RewardMenuSummary(model: model)
             if let error = model.storageError {
                 VStack(alignment: .leading, spacing: 6) {
                     Label(L(error), systemImage: "exclamationmark.triangle")

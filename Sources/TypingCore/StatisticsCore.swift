@@ -45,17 +45,23 @@ public struct ClassifiedInput: Sendable {
     /// Optional frontmost app identity captured with the context, never a title
     /// or text value. Persisted only by explicitly enabled app analytics.
     public var applicationID: String?
+    /// Cached, non-content input-source identity for comparable improvement
+    /// tracks. Never an application, document or text identifier.
+    public var inputMethodID: String?
+    public var usesInputMethod: Bool?
     /// nil means output coverage is unavailable; zero is an observed operation
     /// with no committed characters (for example composition or deletion).
     public var committedCharacters: Int?
     public init(time: Double, date: Date, context: UInt64, category: InputCategory,
                 evidence: Evidence, source: InputSource, operationID: UInt64? = nil,
-                language: String = "und", committedCharacters: Int? = nil, applicationID: String? = nil) {
+                language: String = "und", committedCharacters: Int? = nil, applicationID: String? = nil,
+                inputMethodID: String? = nil, usesInputMethod: Bool? = nil) {
         self.time = time; self.date = date; self.context = context
         self.category = category; self.evidence = evidence; self.source = source
         self.operationID = operationID
         self.language = language; self.committedCharacters = committedCharacters
         self.applicationID = applicationID
+        self.inputMethodID = inputMethodID; self.usesInputMethod = usesInputMethod
     }
 }
 
@@ -421,12 +427,14 @@ public struct StatisticsEngine: Sendable {
     public var completionPending: Bool {
         guard activeEvidence != nil else { return false }
         let lane = activeEvidence == .confirmed ? confirmed : probable
-        return lane.segmentEnd != nil && !lane.segmentFinalized
+        return (lane.segmentEnd != nil && !lane.segmentFinalized) || !lane.pending.isEmpty
     }
     public var completionDeadline: Double? {
         guard completionPending, let lastEventTime else { return nil }
         return lastEventTime + config.maximumGap
     }
+    /// Bounded adaptive evidence that may still add intervals to earlier keys.
+    public var pendingProbableIntervals: Int { probable.pending.count }
 
     public init(config: SegmentationConfig = SegmentationConfig(), timeZone: TimeZone = .current) {
         self.config = config; self.timeZone = timeZone
@@ -487,6 +495,7 @@ public struct StatisticsEngine: Sendable {
         // displayed completed burst from being prematurely split by UI ticks.
         // No waiting time enters either metric's denominator.
         if now - lastEventTime > config.maximumGap {
+            if !lane.pending.isEmpty { interrupt(); return }
             if activeEvidence == .confirmed { confirmed.finishSegment(config: config) }
             else if activeEvidence == .probable { probable.finishSegment(config: config) }
             collectCompletions()

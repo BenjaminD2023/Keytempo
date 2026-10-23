@@ -202,8 +202,8 @@ struct ActivityAnalyticsTests {
         checkEqual(combined.keys, 22); checkEqual(combined.intervals, 20)
         checkEqual(combined.wpm!, 40, accuracy: 1e-9)
         checkEqual(combined.coefficientOfVariation!, 2.0 / 3, accuracy: 1e-9)
-        checkEqual(combined.consistency!, 60, accuracy: 1e-9)
-        checkTrue(combined.consistency! < 100)
+        checkEqual(combined.legacyIntervalConsistency!, 60, accuracy: 1e-9)
+        checkNil(combined.consistency) // Interval moments are not rate samples.
     }
 
     @Test func practiceScoreRewardsDurationAndVolumeOverSlightSpeedDifference() {
@@ -223,14 +223,15 @@ struct ActivityAnalyticsTests {
         checkEqual(capped.value, 100)
     }
 
-    @Test func consistencyRequiresRealSamplesAndNeverClaimsAccuracy() {
+    @Test func legacyScoreKeepsIntervalConsistencyWhileNewMetricRequiresRateSamples() {
         let short = RhythmTotals(keys: 5, intervals: 4, seconds: 0.8, squaredIntervalSeconds: 0.16)
         checkEqual(short.wpm!, 60, accuracy: 1e-9)
         checkNil(short.consistency); checkNil(short.score)
         let steady = RhythmTotals(keys: 21, intervals: 20, seconds: 4, squaredIntervalSeconds: 0.8)
         let varied = RhythmTotals(keys: 21, intervals: 20, seconds: 4, squaredIntervalSeconds: 1)
-        checkEqual(steady.consistency!, 100, accuracy: 1e-6)
-        checkTrue(varied.consistency! < steady.consistency!)
+        checkNil(steady.consistency); checkNil(varied.consistency)
+        checkEqual(steady.legacyIntervalConsistency!, 100, accuracy: 1e-6)
+        checkTrue(varied.legacyIntervalConsistency! < steady.legacyIntervalConsistency!)
         checkEqual(steady.wpm!, varied.wpm!, accuracy: 1e-9)
         checkTrue(steady.score!.value > varied.score!.value)
         for invalid in [RhythmTotals(keys: -1), RhythmTotals(intervals: .infinity),

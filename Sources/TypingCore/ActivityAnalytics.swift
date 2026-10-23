@@ -7,14 +7,30 @@ public struct RhythmTotals: Codable, Sendable, Equatable {
     public var intervals: Double
     public var seconds: Double
     public var squaredIntervalSeconds: Double
+    /// Complete one-second operation-rate moments. Legacy interval moments
+    /// cannot reconstruct these samples, so missing data stays uncovered.
+    public var rateConsistency: RateConsistencyTotals
 
-    public init(keys: Int = 0, intervals: Double = 0, seconds: Double = 0, squaredIntervalSeconds: Double = 0) {
+    public init(keys: Int = 0, intervals: Double = 0, seconds: Double = 0, squaredIntervalSeconds: Double = 0,
+                rateConsistency: RateConsistencyTotals = .init()) {
         self.keys = keys; self.intervals = intervals; self.seconds = seconds
         self.squaredIntervalSeconds = squaredIntervalSeconds
+        self.rateConsistency = rateConsistency
+    }
+    private enum CodingKeys: String, CodingKey {
+        case keys, intervals, seconds, squaredIntervalSeconds, rateConsistency
+    }
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        keys = try values.decode(Int.self, forKey: .keys)
+        intervals = try values.decode(Double.self, forKey: .intervals)
+        seconds = try values.decode(Double.self, forKey: .seconds)
+        squaredIntervalSeconds = try values.decode(Double.self, forKey: .squaredIntervalSeconds)
+        rateConsistency = try values.decodeIfPresent(RateConsistencyTotals.self, forKey: .rateConsistency) ?? .init()
     }
 
     public var isValid: Bool {
-        keys >= 0 && [intervals, seconds, squaredIntervalSeconds].allSatisfy { $0.isFinite && $0 >= 0 }
+        keys >= 0 && [intervals, seconds, squaredIntervalSeconds].allSatisfy { $0.isFinite && $0 >= 0 } && rateConsistency.isValid
     }
     public var wpm: Double? {
         guard isValid, intervals >= 4, seconds >= 0.5 else { return nil }
@@ -34,9 +50,12 @@ public struct RhythmTotals: Codable, Sendable, Equatable {
         let value = sqrt(max(0, variance)) / mean
         return value.isFinite ? value : nil
     }
-    public var consistency: Double? { coefficientOfVariation.map { 100 / (1 + $0) } }
+    public var consistency: Double? { isValid ? rateConsistency.consistency : nil }
+    /// Retained only for explicitly labeled legacy practice-v1 history.
+    /// The primary score and displayed consistency use per-second rates.
+    public var legacyIntervalConsistency: Double? { coefficientOfVariation.map { 100 / (1 + $0) } }
     public var score: TypingScore? {
-        guard let wpm, let consistency else { return nil }
+        guard let wpm, let consistency = legacyIntervalConsistency else { return nil }
         return TypingScore(wpm: wpm, consistency: consistency, typingSeconds: seconds, keys: keys)
     }
 
@@ -50,6 +69,7 @@ public struct RhythmTotals: Codable, Sendable, Equatable {
         keys = sum.partialValue
         intervals += other.intervals; seconds += other.seconds
         squaredIntervalSeconds += other.squaredIntervalSeconds
+        rateConsistency.merge(other.rateConsistency)
     }
 }
 
@@ -136,6 +156,9 @@ public struct ActivityTracker: Sendable {
     // three-interval slow-rhythm backfill around midnight.
     private var previousDaySession: TypingSession?
     private var applicationCollectionStart: Double?
+    private var consistencySampler = RateConsistencySampler()
+    private var appConsistencySampler = RateConsistencySampler()
+    private var sampledApplicationID: String?
 
     public init(sessionGap: Double = 300, timeZone: TimeZone = .current) {
         self.sessionGap = sessionGap.isFinite ? min(3_600, max(60, sessionGap)) : 300
@@ -149,9 +172,18 @@ public struct ActivityTracker: Sendable {
         return finish(reason: "inactivity")
     }
 
-    public mutating func resetApplicationAttribution() { applicationCollectionStart = nil }
+    public mutating func resetApplicationAttribution() {
+        applicationCollectionStart = nil
+        appConsistencySampler.reset(); sampledApplicationID = nil
+    }
+    /// Discard only an incomplete second at a known continuity boundary.
+    /// Completed rate moments and session quantities remain intact.
+    public mutating func interruptConsistency() {
+        consistencySampler.reset(); appConsistencySampler.reset(); sampledApplicationID = nil
+    }
 
     public mutating func finish(reason: String) -> ActivityBatch {
+        interruptConsistency()
         guard var session = currentSession else {
             lastInputTime = nil; lastInputDate = nil; previousDaySession = nil
             applicationCollectionStart = nil
@@ -195,6 +227,10 @@ public struct ActivityTracker: Sendable {
             if applicationCollectionStart == nil { applicationCollectionStart = input.time }
         } else { applicationCollectionStart = nil }
         let app = perAppEnabled ? Self.safeApplicationID(applicationID) : nil
+        if sampledApplicationID != app {
+            appConsistencySampler.reset(); sampledApplicationID = app
+            if app != nil { applicationCollectionStart = input.time }
+        }
         let calendar = self.calendar
         // At most three intervals can be returned by the segmentation engine.
         // Reject malformed oversized results rather than allocating an event history.
@@ -237,6 +273,21 @@ public struct ActivityTracker: Sendable {
                     }
                 }
                 cursor = sliceEnd
+            }
+            // Sampling consumes only intervals the engine has already
+            // accepted. Delayed slow-rhythm backfill is therefore processed
+            // in its original order, without speculative per-key buckets.
+            for sample in consistencySampler.record(interval) {
+                let date = input.date.addingTimeInterval(sample.endTime - input.time)
+                let totals = RhythmTotals(rateConsistency: sample.totals)
+                addHour(totals, date: date, applicationID: "", rule: rule, into: &hourly)
+                addSession(totals, start: date, end: date, rule: rule, output: &outputSessions)
+            }
+            if let app, let collectionStart = applicationCollectionStart, interval.startTime >= collectionStart {
+                for sample in appConsistencySampler.record(interval) {
+                    let date = input.date.addingTimeInterval(sample.endTime - input.time)
+                    addHour(RhythmTotals(rateConsistency: sample.totals), date: date, applicationID: app, rule: rule, into: &hourly)
+                }
             }
         }
 

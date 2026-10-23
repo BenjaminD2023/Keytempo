@@ -16,10 +16,34 @@ The project changed its public version convention before the `0.3.0` release. Hi
 | 0.3.1 | 0.3.1 / `v0.3.1` | 14 | Chinese input recovery and hybrid menu display |
 | 0.3.2 | 0.3.2 / `v0.3.2` | 15 | Combined language metrics and clearer menu behavior |
 | 0.4.0 | 0.4.0 / `v0.4.0` | 16 | Local activity timeline, sessions and multi-factor practice score |
+| 0.4.1 | 0.4.1 / `v0.4.1` | 17 | Accumulating score, independent XP, exact levels and personal improvement |
 
 Already published signed archives, source tags and download URLs retain their original `1.x` identifiers. Their changelog labels are normalized; their embedded app versions have not been rewritten. New releases use `0.x` app versions and tags. The internal build number continues increasing, so Sparkle can offer `0.3.0` (build 11) to apps displaying `1.2.0` (build 9) or `1.2.1` (build 10).
 
 ## [Unreleased]
+
+## [0.4.1] - 2026-10-24
+
+### Added
+
+- Replace the primary 0–100 practice score with accumulating Typing Score: incremental daily logarithmic time/key points and finalized quality bonuses in canonical 100-key blocks. Preserve incomplete blocks, daily earning counters and already earned rewards across pauses, application changes and relaunches.
+- Add independent whole-number XP: one XP per 300 accepted typing seconds, one per 2,000 accepted keys, and five per newly verified personal-improvement milestone. Preserve time/key remainders across days and updates without score conversion, speed multipliers, streak penalties or daily XP caps.
+- Add exact level progression with whole-XP costs and real cumulative milestones: levels 20, 30, 40, 50 and 60 require exactly 500, 1,000, 2,000, 3,000 and 5,000 XP. Show precise next-level progress and grouped level-up/improvement feedback.
+- Add independent speed/consistency calibration by compatible language/input-method context, frozen baselines, bounded completed-day verification windows and persistent one-time milestone claims. Measurement-policy changes preserve award lineage and conservatively suspend incompatible improvement awards.
+- Add local reward checkpoints, transactional award/claim ledgers, daily component totals, hour/session attribution, separate rewards CSV export, coverage disclosures and English/Simplified Chinese explanations. Start new-system coverage at first activation after migration; preserve legacy history without fabricating historical points, XP, blocks or baselines.
+
+### Changed
+
+- Measure standalone rhythm consistency from completed one-second accepted-operation samples, using `100 × (1 − tanh(CV + CV³ / 3 + CV⁵ / 5))`. Require ten complete samples and twenty represented accepted intervals; include zero-count seconds only inside accepted continuous input, never idle tails, context gaps or incomplete trailing seconds.
+- Use the same Monkeytype-style rate variation and Kogasa mapping for score/improvement consistency, normalized within run/block fragments before combining covered-interval-weighted CV². Keep speed and consistency coverage separate; unavailable evidence never becomes zero or perfect consistency.
+- Show earned daily, seven-day and lifetime point totals, independent XP sources/remainders, exact levels, calibration progress and separate performance trends. Label preserved `practice-v1` information as legacy rather than mixing its 0–100 values with accumulating points.
+- Preserve lifetime rewards, daily earned totals, XP remainders and milestone claims when detailed history is pruned or optional app details are cleared. Explicit deletion of all data also clears progression and baselines.
+
+### Fixed
+
+- Size the menu bar status item for its full measured text so live WPM, units and large-count modes are not clipped during display changes.
+- Keep reward checkpoints from interrupting live typing continuity; reconcile bounded delayed intervals before block settlement and add genuinely late time as an identified base adjustment without rewriting finalized bonuses.
+- Resolve expired adaptive candidates without requiring another keystroke, and defer capacity-triggered writes until the current canonical event has contributed its measurement, activity and reward changes. Preserve immutable retry payloads and show unavailable hour attribution when historical and fixed reward timezone boundaries differ.
 
 ## [0.4.0] - 2026-10-23
 
@@ -172,7 +196,8 @@ Originally local `1.1.0` builds; no separate public release archive was publishe
 - Separate global estimates from a real confirmed editor adapter, with adaptive segment timing and local aggregate storage.
 - Establish core, persistence and application integration tests and document the limits of real-world input and resource validation.
 
-[Unreleased]: https://github.com/BenjaminD2023/Keytempo/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/BenjaminD2023/Keytempo/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/BenjaminD2023/Keytempo/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/BenjaminD2023/Keytempo/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/BenjaminD2023/Keytempo/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/BenjaminD2023/Keytempo/compare/v0.3.0...v0.3.1

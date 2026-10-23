@@ -468,9 +468,12 @@ final class InputMonitor {
             return false
         }
         if category == .unknown { unknownEvents &+= 1 }
+        let inputSource = InputLanguages.current
         let input = ClassifiedInput(time: event.time, date: date.addingTimeInterval(event.time - now),
                                     context: event.version, category: category, evidence: evidence,
-                                    source: .global, language: snapshot.languageCode, applicationID: snapshot.bundleID)
+                                    source: .global, language: snapshot.languageCode, applicationID: snapshot.bundleID,
+                                    inputMethodID: inputSource.identifier + "|" + inputSource.modeIdentifier,
+                                    usesInputMethod: inputSource.inputMethod)
         if suspectedInputFilteringEnabled && category == .textEntry && evidence == .probable {
             deliverInputQuality(inputQuality.observe(input, physicalKey: event.key))
         } else {

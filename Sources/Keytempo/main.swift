@@ -31,7 +31,8 @@ import TypingCore
         }
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.target = self; statusItem.button?.action = #selector(togglePopover)
-        statusItem.button?.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+        statusItem.button?.font = StatusItemPresentation.font
+        statusItem.button?.cell?.usesSingleLineMode = true
         popover.behavior = .transient
         popover.delegate = self
         updateMenu()
@@ -88,7 +89,13 @@ import TypingCore
             else { title += value.map { " \(prefix)\($0.formatted(.number.precision(.fractionLength(0)))) \(unit)" } ?? " — \(unit)" }
             if model.phase == "idle", value != nil { title += " ·" }
         }
-        if statusItem.button?.title != title { statusItem.button?.title = title }
+        if let button = statusItem.button {
+            let width = StatusItemPresentation.width(for: title, mode: model.menuDisplay)
+            if statusItem.length != width { statusItem.length = width }
+            if button.title != title {
+                button.attributedTitle = NSAttributedString(string: title, attributes: [.font: StatusItemPresentation.font])
+            }
+        }
         var tooltip = L("Keytempo · %@ · %@ · 输入速度约每秒更新。停止后保留最近值，等待不计时。WPM 为按键折算估算；KPM 可在设置中选择。", L(model.status), L("合并全部输入语言"))
         if model.menuDisplay == "hybrid" {
             tooltip = L("Keytempo · %@ · %@", L(model.status), L("合并全部输入语言"))
