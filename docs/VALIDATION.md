@@ -2,7 +2,7 @@
 
 记录更新：2026-10-23（Asia/Shanghai），历史验证基线 Keytempo 1.1.0 build 7，安装位置 `/Applications/Keytempo.app`。测试机为 Apple M4 MacBook Air、24 GB 内存、macOS 27.0。项目最低部署版本为 macOS 13；编译目标通过不代表已在 macOS 13 实机验证。
 
-## 0.4.1 build 17 自动化与界面验收（2026-10-24，发布准备）
+## 0.4.1 build 17 自动化与发布验收（2026-10-24）
 
 本次实现 `score-v2` 累加练习积分、独立 `xp-v1`、`improvement-v1` 个人进步轨道与 `levels-v1` 精确等级，主要界面不再将新积分显示为满分 100。基础分按奖励日使用 `60 × log1p(实际秒数 / 3600) + 60 × log1p(已接受敲键数 / 15000)`，只发新增边际贡献；按输入顺序的 100 键块结算有上限的速度／稳定度奖励，未满块、每日预算和 XP 余量跨暂停／重启保存。新系统从 0.4.1 首次启用后开始覆盖，旧历史与 `practice-v1` 信息保留并分开标注，不补造历史积分、XP、块或基线。奖励时区固定于首次启用，完整公式、证据门槛与迟到调整策略见 [SCORING.md](SCORING.md)。
 
@@ -27,7 +27,11 @@ XP 用例确认 299→300 秒与 1,999→2,000 键的整数门槛、跨日／重
 
 夹具使用独立 bundle ID、临时数据库和真实 AppKit／SwiftUI 视图，不开启全局监听或生产更新联网，不写入日常数据库；合成图表与奖励不代表物理输入、真实个人进步或功耗实测。构建与夹具校验资料位于 `artifacts/release-0.4.1-build17/ui-preview/`。另外以真实 `NSStatusItem` 核对 `⌨ ≈85 WPM` 与 `⌨ ≈506`：通过夹具原生 Hide 菜单触发真实失活，`didBecomeActive`、`didResignActive` 及后续 layout 的 `length`／`buttonWidth` 均为 **93 point**，未用伪造 active 状态代替验证。日志为 `artifacts/release-0.4.1-build17/ui-preview/status-item.log`；这证明该机这两个固定标题的激活／失活尺寸，不宣称所有菜单栏拥挤程度或显示设置均已覆盖。
 
-当前为 **0.4.1 build 17 发布准备**：本地 Release 产物与上述自动化／隔离原生界面已验收，公开 GitHub 发布、公开签名更新源和已安装应用的实际 Sparkle 升级仍待后续验证与追加记录。没有将本次元数据夹具当作新的第三方 App 物理输入误计／漏计验收，也未新增完整电池增量低于 1 W 的结论；资源范围以 [PERFORMANCE.md](../PERFORMANCE.md) 为准。下方 0.4.0 与更早章节保留各版本当时的算法、发布及验证事实。
+已公开发布 [v0.4.1](https://github.com/BenjaminD2023/Keytempo/releases/tag/v0.4.1)，内部 build 17，源码标签为 `6fd2f4ef2996ebab42bfbc846d61f8167f72dbd9`。从该干净提交再次执行完整测试／Release／原生集成检查成功，GitHub [CI](https://github.com/BenjaminD2023/Keytempo/actions/runs/39992901176) 与 [Release validation](https://github.com/BenjaminD2023/Keytempo/actions/runs/39992902008) 均成功。公开下载的 arm64 ZIP、源码 ZIP 和 SHA256SUMS 与本地发布产物逐字节一致；公开原始更新源与签名源一致，首项为 0.4.1 / 17，归档与 XML 的 Ed25519 签名复核通过。Release note 仅包含 0.4.1 改动，完整 changelog 保留历史；仍为稳定 Apple Development 签名，未宣称 Developer ID 公证发行。
+
+实际升级前已通过原生设置确认 0.4.0 的输入监控／辅助功能均已授权，并使用 SQLite backup 保存一致快照：schema 3、13 条日汇总、5 条小时行、5 个会话。中文界面、混合菜单、中文兼容／疑似过滤、自动更新和用户已开启的按应用记录均保留原设置。随后 Mac 锁屏，已请求解锁；本机 Sparkle 安装、schema 3→5 实际迁移和升级后权限／数据保留尚待完成，不能用公开下载校验代替这些运行验收。
+
+没有将本次元数据夹具当作新的第三方 App 物理输入误计／漏计验收，也未新增完整电池增量低于 1 W 的结论；资源范围以 [PERFORMANCE.md](../PERFORMANCE.md) 为准。下方 0.4.0 与更早章节保留各版本当时的算法、发布及验证事实。
 
 ## 0.4.0 build 16 自动化与界面验收（2026-10-23）
 
