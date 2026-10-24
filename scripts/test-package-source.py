@@ -25,8 +25,9 @@ class SourcePackageTests(unittest.TestCase):
         (self.root / "Resources/Info.plist").write_bytes(plistlib.dumps({"CFBundleShortVersionString": version}))
         return subprocess.run(["zsh", str(self.root / "scripts/package-source.sh")], capture_output=True, text=True)
 
-    def test_stable_and_restricted_beta_names_produce_valid_archives(self):
-        for version in ["0.5.0", "0.5.0-beta", "0.5.0-beta.0", "0.5.0-beta.12"]:
+    def test_stable_and_restricted_preview_names_produce_valid_archives(self):
+        for version in ["0.5.0", "0.5.0-beta", "0.5.0-beta.0", "0.5.0-beta.12",
+                        "0.5.0-rc", "0.5.0-rc.0", "0.5.0-rc.12"]:
             with self.subTest(version=version):
                 result = self.package(version)
                 self.assertEqual(result.returncode, 0, result.stderr)
@@ -37,7 +38,7 @@ class SourcePackageTests(unittest.TestCase):
                     self.assertTrue(all(name.startswith("Keytempo/") and ".." not in Path(name).parts for name in source.namelist()))
 
     def test_unapproved_suffixes_and_path_components_fail_before_writing(self):
-        for version in ["0.5.0-beta.01", "0.5.0-beta/../escape", "../0.5.0", "0.5.0-alpha", "0.5.0-beta+metadata", "0.5.0-beta\n"]:
+        for version in ["0.5.0-beta.01", "0.5.0-beta/../escape", "../0.5.0", "0.5.0-alpha", "0.5.0-beta+metadata", "0.5.0-beta\n", "0.5.0-rc.01", "0.5.0-rc/../escape", "0.5.0-rc+metadata", "0.5.0-rc\n", "0.5.0-rc.", "0.5.0-RC"]:
             with self.subTest(version=version):
                 result = self.package(version)
                 self.assertNotEqual(result.returncode, 0)

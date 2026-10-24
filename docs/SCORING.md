@@ -1,6 +1,6 @@
 # Daily Typing Score, XP and levels
 
-This document describes **0.5.0-beta**: `daily-score-v3`, `daily-xp-v2` and `levels-v2-150`. It supersedes the accumulating block score as the primary interface. Published 0.4.1 records remain legacy; their values and earned XP are preserved.
+This document describes **0.5.0-rc (build 20)**: `daily-score-v3`, `daily-xp-v2` and `levels-v2-150`. The scoring and settlement policies introduced in 0.5.0-beta are unchanged. Published 0.4.1 records and earned XP are preserved, while legacy score charts and reward-export entries are removed from the app interface.
 
 Keytempo's score is an explainable personal-practice index. It is not an accuracy test, a productivity measure, a semantic-content detector or a certified skill assessment. Estimated WPM measures accepted input operations, including supported composition and editing, rather than actual words or committed Chinese characters.
 
@@ -13,10 +13,10 @@ Keytempo's score is an explainable personal-practice index. It is not an accurac
 | Daily XP | `daily-xp-v2` | Final score converted to whole XP, plus verified improvement |
 | Level schedule | `levels-v2-150` | Exact thresholds scaled 150× |
 | Improvement evidence | `improvement-v1` | Retained frozen baselines and completed-day verification |
-| Legacy points / XP | `score-v2` / `xp-v1` | Preserved ledger; not the primary daily score or ordinary XP source |
-| Original practice score | `practice-v1` | Historical 0–100 index, explicitly legacy |
+| Legacy points / XP | `score-v2` / `xp-v1` | Preserved compatibility ledger; hidden from the app interface |
+| Original practice score | `practice-v1` | Preserved historical 0–100 index; hidden from the app interface |
 
-New daily-score coverage starts at first activation of the beta. Old daily totals cannot reconstruct complete one-second consistency samples or compatible new-policy evidence; no past scores or ordinary XP are fabricated. Existing input history, reward ledgers, baselines and milestone claims survive the additive migration. An uncovered date is unavailable, not a zero score.
+New daily-score coverage starts at first activation of the daily system in 0.5.0-beta or later; updating to the release candidate does not restart that coverage. Old daily totals cannot reconstruct complete one-second consistency samples or compatible new-policy evidence; no past scores or ordinary XP are fabricated. Existing input history, reward ledgers, baselines and milestone claims survive the additive migration. An uncovered date is unavailable, not a zero score.
 
 Reward days use the persisted progression timezone, inherited from existing rewards when present. Changing the system timezone does not start a fresh budget. The logical current day does not move backward after a clock correction. Calendar changes never create typing time.
 
@@ -100,7 +100,7 @@ Ordinary XP is the finalized daily score **1:1**, with no daily cap. The current
 6. Input/activity deltas, daily checkpoint, receipts and permanent claims commit in one SQLite transaction. Only committed unseen receipts are eligible for animation. A save failure retains the immutable retry payload; opening a window never mints XP.
 7. On the next menu or app opening, unseen receipts display in date order, one at a time. Skip-one/skip-all change only presentation acknowledgement. Closing before acknowledgement leaves the receipt unseen for next time. Replaying or skipping cannot award or revoke XP.
 
-The settlement panel contains date, score, ordinary/improvement XP where applicable, and before/after level information. There is no settlement-review navigation entry or manual claim button. Effects are finite and cancelled when the panel closes. Visual tiers begin at levels 1, 20 and 60. Reduce Motion displays static feedback rather than requiring animated completion.
+The settlement panel contains date, score, ordinary/improvement XP where applicable, and before/after level information. There is no settlement-review navigation entry or manual claim button. Effects are finite and cancelled when the panel closes. Visual tiers begin at levels 1, 18 and 58, separate from the Prism and Stellar theme unlocks at 20 and 60. Reduce Motion displays static feedback rather than requiring animated completion.
 
 A day without recorded input does not create a fake score or an empty animation. A settled day's genuinely late evidence cannot rewrite its finalized score. It remains in ordinary measurement history according to existing rules; the daily ledger conservatively excludes it from the already committed day rather than awarding twice. Startup ends continuity and partial live rate bins; it does not invent intervals across a restart.
 
@@ -156,6 +156,37 @@ Balances and costs are whole integers. The piecewise level lookup is constant ti
 
 Scaling is not a universal claim that every user now levels faster or slower: ordinary XP changed from time/key thresholds to a score influenced by speed and consistency. For the 41-minute/16,001-key example, the old time/key formula gave 16 XP; the new 2,072 XP is about 13.81 old units under 150× costs. Different practice patterns yield different progress.
 
+## Ranks and appearance
+
+The Levels & Appearance page displays rank badges, the current level, exact whole-number XP progress, remaining XP, a complete unlock roadmap, previews and settings. It uses the settled lifetime balance and the same integer level schedule above; a rank label or visual unlock does not create an additional award or spend XP. System, light and dark appearance are selectable independently of the app language.
+
+Classic and the Keyboard icon are available initially. Each later milestone in the appearance roadmap unlocks exactly one item, rather than a bundle:
+
+| Level | New selectable item |
+|---:|---|
+| 1 | Classic theme and Keyboard icon (initial choices) |
+| 5 | Wave menu icon |
+| 10 | Ocean theme |
+| 15 | Menu coloring by current estimated WPM |
+| 18 | Prism settlement effects |
+| 20 | Prism theme |
+| 25 | Orbit menu icon |
+| 30 | Forest theme |
+| 35 | Spark menu icon |
+| 40 | Ember theme |
+| 45 | Menu coloring by today's accepted keystroke count |
+| 50 | Graphite theme |
+| 55 | Bolt menu icon |
+| 58 | Stellar settlement effects |
+| 60 | Stellar theme |
+| 70 | Custom low/high speed colors and WPM range |
+| 80 | Rose theme |
+| 100 | Aurora theme |
+
+The roadmap has eighteen distinct milestone levels, covering nine themes, five menu icons, three color-control unlocks and two enhanced settlement-effect tiers; Level 1 supplies the two initial choices. The Level 70 controls customize both endpoint colors and the WPM range of the speed-color ramp. An appearance selection changes presentation only, without changing accepted-input rules, score, XP, settlement timing or level costs. Locked options do not become selectable through preview or stored preferences; after a data reset, a stored preference above the user's new level falls back to an available choice.
+
+Current daily-score history, raw activity totals and personal-improvement/calibration details remain available. The release candidate removes the old `score-v2` disclosure/export and `practice-v1` chart, rather than deleting their underlying evidence or ledger. Existing awarded XP, migration markers, frozen baselines and milestone claims are retained.
+
 ## Persistence, retention and privacy
 
 SQLite schema 6 adds the daily checkpoint, immutable receipt rows and permanent daily claim identities. Checkpoint revisions must advance consecutively. Receipt score, ordinary XP, improvement XP, exact levels and balances reconcile before a transaction commits. Batch identities are idempotent; reusing an identity with different contents is rejected. Corrupt/nonfinite evidence and arithmetic overflow stop new rewards with a visible error while preserving ordinary input statistics.
@@ -164,13 +195,13 @@ Acknowledgement timestamps live separately from immutable receipt payloads. Alre
 
 The coordinator completes all contributions from a canonical accepted event before capacity-triggered persistence. Normal saves coalesce around the existing thirty-second schedule off the keyboard callback. There is no per-key row/fsync, additional keyboard monitor, persistent sequence log or permanent high-frequency reward timer. Uncommitted input can be lost after crash or force quit; delayed or failed writes can leave more than thirty seconds unsaved. The app cannot recover activity it never saved.
 
-The daily-rewards CSV exports committed receipts with day, timezone, policy, score, ordinary/improvement XP, balances, levels, aggregate evidence, settlement time and coverage. Pending daily values remain in the live checkpoint. The old rewards export remains clearly legacy. Raw input/activity exports retain their existing formats; adding rows of different record types together would duplicate the same activity.
+The daily-rewards CSV exports committed receipts with day, timezone, policy, score, ordinary/improvement XP, balances, levels, aggregate evidence, settlement time and coverage. Pending daily values remain in the live checkpoint. The app no longer exposes a separate legacy-rewards export entry; its ledger remains stored for compatibility. Raw input/activity exports retain their existing formats; adding rows of different record types together would duplicate the same activity.
 
 Only counts, durations, sufficient moments, necessary input-source identifiers and reward/checkpoint metadata are stored. There is no typed text, clipboard, window title, URL, physical-key sequence, interval sequence or per-second sequence. Optional per-app data is local and off by default.
 
 ## Historical policies
 
-0.4.0's `practice-v1` combined four capped components into a 0–100 index. 0.4.1's `score-v2` accumulated daily logarithmic time/volume points and settled up to 25% speed plus 15% consistency bonuses in canonical 100-key blocks. Its independent `xp-v1` awarded one XP per 300 measured seconds, one per 2,000 accepted keys and five per verified improvement milestone, with persistent lifetime remainders. These records and claims remain intact and explicitly legacy. They are not relabeled as new daily scores, summed into a new chart, or converted into ordinary XP a second time.
+0.4.0's `practice-v1` combined four capped components into a 0–100 index. 0.4.1's `score-v2` accumulated daily logarithmic time/volume points and settled up to 25% speed plus 15% consistency bonuses in canonical 100-key blocks. Its independent `xp-v1` awarded one XP per 300 measured seconds, one per 2,000 accepted keys and five per verified improvement milestone, with persistent lifetime remainders. These records and claims remain intact as compatibility data, without a legacy score chart or reward disclosure/export in the app. They are not relabeled as new daily scores, summed into a new chart, or converted into ordinary XP a second time.
 
 The legacy evaluator continues producing compatible improvement evidence and claims. Only newly observed improvement deltas are scaled into the daily engine; its ongoing legacy ordinary time/key counters do not become a second new XP source.
 

@@ -84,14 +84,6 @@ struct ActivityView: View {
         return start...(calendar.date(byAdding: .day, value: 1, to: start) ?? start.addingTimeInterval(86400))
     }
 
-    private var scoreDateRange: ClosedRange<Date> {
-        let calendar = Calendar.current
-        let last = calendar.startOfDay(for: model.activityDate)
-        let first = calendar.date(byAdding: .day, value: -29, to: last) ?? last
-        let end = calendar.date(byAdding: .day, value: 1, to: last) ?? last.addingTimeInterval(86400)
-        return first...end
-    }
-
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
@@ -117,7 +109,6 @@ struct ActivityView: View {
                     sessions
                     appBreakdown
                     RewardHistory(model: model)
-                    DisclosureGroup(L("旧版评分（practice-v1，满分 100）")) { legacyScoreHistory }
                 }
                 Text(L("活动详情从 0.4.0 开始记录；旧版每日汇总不会被补造成小时或会话。这里只统计全局估算输入，验证输入区不计入。"))
                     .font(.caption).foregroundStyle(.secondary)
@@ -290,30 +281,6 @@ struct ActivityView: View {
         }
     }
 
-    private var legacyScoreHistory: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label(L("近 30 天练习评分"), systemImage: "chart.bar.xaxis").font(.headline)
-            Text(L("截止所选日期；仅显示样本足够且计数方式一致的日期，不补造缺失天数。"))
-                .font(.caption).foregroundStyle(.secondary)
-            if model.activityScoreDays.contains(where: { !$0.hasMixedRules && $0.totals.score != nil }) {
-                Chart(model.activityScoreDays) { day in
-                    if !day.hasMixedRules, let score = day.totals.score {
-                        RectangleMark(xStart: .value(L("日期"), day.day),
-                                xEnd: .value(L("日期"), Calendar.current.date(byAdding: .day, value: 1, to: day.day) ?? day.day.addingTimeInterval(86400)),
-                                      yStart: .value(L("评分"), 0.0), yEnd: .value(L("评分"), score.value))
-                            .foregroundStyle(Color.accentColor)
-                    }
-                }
-                .chartXScale(domain: scoreDateRange)
-                .chartYScale(domain: 0...100)
-                .chartXAxis { AxisMarks(values: .automatic(desiredCount: 6)) }
-                .frame(height: 175)
-                .accessibilityLabel(L("每日练习评分趋势，满分一百分"))
-            } else {
-                Text(L("记录更多输入后，这里会显示每日评分趋势。")).font(.callout).foregroundStyle(.secondary)
-            }
-        }
-    }
 }
 
 private struct ActivityMetric: View {
@@ -328,26 +295,6 @@ private struct ActivityMetric: View {
             if let detail { Text(detail).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
         }.frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
-    }
-}
-
-private struct ScoreComponent: View {
-    let label: String
-    let value: Double?
-    let target: String
-    let color: Color
-    var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack {
-                Text(label).fontWeight(.medium)
-                Spacer(minLength: 5)
-                Text(activityValue(value)).monospacedDigit()
-            }.font(.callout)
-            ProgressView(value: value ?? 0, total: 100).tint(color)
-                .accessibilityLabel(label).accessibilityValue(value.map { "\(activityValue($0)) / 100" } ?? L("数据不足"))
-            Text(L("占比 25%") + " · " + target).font(.caption).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }.frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

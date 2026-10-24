@@ -42,8 +42,8 @@ def numeric_build(value: str) -> int:
 
 
 def release_version(value: str) -> str:
-    if len(value) > 128 or not re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-beta(?:\.(?:0|[1-9][0-9]*))?)?", value):
-        raise ValueError("Version must have three numeric components and an optional -beta or -beta.N suffix")
+    if len(value) > 128 or not re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-(?:beta|rc)(?:\.(?:0|[1-9][0-9]*))?)?", value):
+        raise ValueError("Version must have three numeric components and an optional -beta[.N] or -rc[.N] suffix")
     return value
 
 
@@ -98,8 +98,8 @@ def load_feed(path: Path) -> ET.Element:
         channels = item.findall(tag(SPARKLE, "channel"))
         if len(channels) > 1 or (channels and channels[0].text != "beta"):
             raise ValueError("Release channel must be the default channel or beta")
-        if ("-beta" in version) != bool(channels):
-            raise ValueError("Beta release versions must use the beta update channel")
+        if ("-" in version) != bool(channels):
+            raise ValueError("Beta and RC releases must use the beta preview update channel")
         if build in builds or version in versions:
             raise ValueError("Duplicate release version or build")
         builds.add(build)
@@ -167,7 +167,7 @@ def make_feed(previous: Path, *, version: str, build: str, signature: str,
     ET.SubElement(item, "pubDate").text = format_datetime(instant.astimezone(timezone.utc), usegmt=True)
     ET.SubElement(item, tag(SPARKLE, "version")).text = build
     ET.SubElement(item, tag(SPARKLE, "shortVersionString")).text = version
-    if "-beta" in version:
+    if "-" in version:  # Both approved prerelease suffixes share the preview channel.
         ET.SubElement(item, tag(SPARKLE, "channel")).text = "beta"
     ET.SubElement(item, tag(SPARKLE, "minimumSystemVersion")).text = minimum_os
     ET.SubElement(item, "description").text = "See the linked release for changes, signing details and known limitations."

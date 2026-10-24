@@ -29,11 +29,11 @@ struct SettlementPresentation: Identifiable, Equatable {
     var levelsGained: Int { max(0, (after?.level ?? 1) - (before?.level ?? 1)) }
     var tier: Int {
         let level = after?.level ?? 1
-        return level >= 60 ? 60 : level >= 20 ? 20 : 1
+        return level >= 58 ? 60 : level >= 18 ? 20 : 1
     }
     var newlyUnlockedTier: Bool {
         let prior = before?.level ?? 1, next = after?.level ?? 1
-        return (prior < 20 && next >= 20) || (prior < 60 && next >= 60)
+        return (prior < 18 && next >= 18) || (prior < 58 && next >= 58)
     }
 }
 

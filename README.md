@@ -28,7 +28,7 @@ The daily overview and menu popup show one **estimated keystroke counter** for e
 
 ## Activity, Typing Score and XP
 
-The current prerelease is **0.5.0-beta (build 19)**. Stable release **0.4.1** keeps its published scoring policy; this prerelease introduces the daily policy below. See the [changelog](CHANGELOG.md) and [validation notes](docs/VALIDATION.md) for release changes and executed checks.
+The current prerelease is **0.5.0-rc (build 20)**. Stable release **0.4.1** keeps its published scoring policy; the 0.5.0 prereleases use the daily policy below. See the [changelog](CHANGELOG.md) and [validation notes](docs/VALIDATION.md) for release changes and executed checks.
 
 The **Activity** tab provides a date-selectable hourly timeline, automatic sessions, separate speed/consistency trends, and a daily-score chart. Hours and sessions show accepted keystrokes, actual typing time and weighted estimated WPM. Sessions end after a five-minute gap or a pause, sleep, quit, day, timezone or counting-rule boundary. Elapsed span is separate from measured typing time; interruptions add no time.
 
@@ -46,20 +46,32 @@ Consistency uses **Monkeytype-style complete one-second operation rates and the 
 
 **Ordinary XP equals the final daily score, one for one.** Today's XP is shown as pending, separate from committed lifetime XP and exact level progress. At midnight in the fixed reward timezone, the day closes. If the computer is still awake with its displays on, settlement waits until display sleep, system sleep or shutdown while the next day's score starts separately. Sleeping across midnight is caught up after wake without waking the computer just to settle. Only ended days settle, once; opening the app does not itself award XP.
 
-The next opening of the menu or app automatically presents committed unseen settlements in date order. There is no settlement-review tab or manual reward-claim step. Each card shows the date, score, XP and any level change; skip controls acknowledge animations without changing earnings. Unfinished presentations remain available next time. Finite level-up effects gain visual tiers at levels 20 and 60, and Reduce Motion uses static feedback.
+The next opening of the menu or app automatically presents committed unseen settlements in date order. There is no settlement-review tab or manual reward-claim step. Each card shows the date, score, XP and any level change; skip controls acknowledge animations without changing earnings. Unfinished presentations remain available next time. Finite level-up effects gain visual tiers at levels 18 and 58, separate from theme unlocks, and Reduce Motion uses static feedback.
 
 Verified personal improvement still requires completed-day evidence, with frozen compatible-context baselines and independent speed/consistency calibration. Each newly verified **+5% relative speed** or **+5 consistency points** earns **750 additional XP**, once. Brief bursts and the unfinished current day cannot claim a milestone. The legacy evaluator retains its run-normalized rate consistency for comparable improvement evidence; this differs from the pooled daily-score consistency.
 
-Existing XP and every level threshold are both multiplied by **150**, preserving the previous level and proportional progress. Level 20 requires **75,000 lifetime XP**; level 60 requires **750,000**. For example, an old balance of 520 becomes 78,000: still Level 20, now 3,000/7,500 XP toward Level 21. Levels have no fixed maximum. The daily policy starts at first activation; older score records remain explicitly legacy and are not backfilled into new daily scores or awarded twice. The unpublished 0.4.2 work is included in this beta rather than released separately.
+Existing XP and every level threshold are both multiplied by **150**, preserving the previous level and proportional progress. Level 20 requires **75,000 lifetime XP**; level 60 requires **750,000**. For example, an old balance of 520 becomes 78,000: still Level 20, now 3,000/7,500 XP toward Level 21. Levels have no fixed maximum. The daily policy starts at first activation; older score records and earned XP stay preserved on disk, without old score charts or reward exports in the app. No historical daily scores or second awards are fabricated. The previously unpublished 0.4.2 work was included in 0.5.0-beta.
+
+The **Levels & Appearance** page brings rank badges, exact current/required XP, remaining XP, a full unlock roadmap, previews and appearance settings together. Choose system, light or dark appearance. The roadmap spreads rewards across separate milestones, with one new item per milestone after the initial Classic theme and keyboard icon:
+
+| Choice | Unlock levels |
+|---|---|
+| Themes | Classic 1 · Ocean 10 · Prism 20 · Forest 30 · Ember 40 · Graphite 50 · Stellar 60 · Rose 80 · Aurora 100 |
+| Menu icons | Keyboard 1 · Wave 5 · Orbit 25 · Spark 35 · Bolt 55 |
+| Menu color controls | Speed-based color 15 · Daily-keystroke color 45 · Custom low/high speed colors and WPM range 70 |
+| Settlement effects | Prism effects 18 · Stellar effects 58 |
+
+The Level 70 controls customize the two endpoints and range of the speed-color ramp. Unlocks use settled lifetime XP; previews and selections do not spend XP. These are local cosmetic choices and do not change input filtering, scores, XP or level thresholds. Current daily history and personal-improvement calibration remain available in Activity.
 
 **Coverage and durability:** reward days use a persisted timezone, independent of later OS timezone changes. Accepted monotonic intervals supply all measured time. Batched SQLite transactions save input/activity deltas, daily state and immutable settlement receipts together; stable identities prevent duplicate XP on retries. Presentation acknowledgements are separate from balances. Normal saves coalesce around thirty seconds; crashes or delayed writes can lose unsaved input. No per-key database row or permanent high-frequency reward timer is added. Completed settlement details follow the five-year retention horizon; lifetime totals and permanent claims survive detail pruning. Delete all data also removes progression and baselines.
 
-**Store per-app activity locally** remains optional and off by default. Only bundle identifiers and aggregates are saved when enabled; rewards do not require app identities. No text, clipboard, titles, URLs, key sequences, interval logs or per-second sequences are stored. The separate daily-rewards export contains committed receipts and policy/coverage metadata; the old reward export remains explicitly legacy. See [the complete scoring policy](docs/SCORING.md) for evidence gates, lifecycle behavior, formulas and exact levels.
+**Store per-app activity locally** remains optional and off by default. Only bundle identifiers and aggregates are saved when enabled; rewards do not require app identities. No text, clipboard, titles, URLs, key sequences, interval logs or per-second sequences are stored. The separate daily-rewards export contains committed receipts and policy/coverage metadata. The old reward ledger remains stored for migration and compatible improvement evidence, without a separate legacy export entry in the app. See [the complete scoring policy](docs/SCORING.md) for evidence gates, lifecycle behavior, formulas and exact levels.
 
 ## Features
 
 - Current menu bar speed or WPM while typing with today's count otherwise, a ten-minute average in the popup, daily average/totals, pause/resume and optional launch at login.
 - Hourly activity, automatic sessions, optional local per-app activity, Monkeytype-style consistency, daily Typing Score, score-based XP, deferred settlement and exact levels.
+- A Levels & Appearance page with exact XP progress, a full unlock roadmap and previews, nine themes, five menu icons, menu-color controls and separate settlement-effect milestones.
 - English and Simplified Chinese app interfaces, independent of input-source language.
 - Combined input statistics across all accepted languages, without recorded-language selection.
 - Combined 7-day, 30-day, 90-day, one-year and five-year history, separate KPM columns and CSV export.
@@ -91,7 +103,7 @@ The built-in validation editor works without these global permissions. Secure In
 
 Choose **Check for Updates…** in the app menu or Settings to check manually, then use the update window to download and install. Settings also controls automatic update checks and automatic download/install on quit. Sparkle checks a public HTTPS appcast and verifies Ed25519 signatures for the feed and update archive before installation; it does not upload typing statistics. A final relaunch may be needed to finish an update.
 
-**Beta channel:** stable installations continue to receive stable updates. A manually installed beta also accepts the signed beta channel; beta releases are marked as prereleases and do not replace the stable GitHub Latest release.
+**Prerelease channel:** stable installations continue to receive stable updates. A manually installed beta or release candidate also accepts the signed prerelease channel; prereleases do not replace the stable GitHub Latest release.
 
 The 0.1.1 app (original app/tag `1.1.1`) does not contain an updater; install the first updater-enabled release manually once. Updates do not grant privacy permissions, bypass macOS approval or convert global Chinese keystrokes into confirmed CPM. Certificate signing and download signatures protect different parts of the update process. See [release instructions](docs/RELEASING.md) for publisher setup and known signing limits.
 

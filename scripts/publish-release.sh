@@ -34,7 +34,7 @@ release_tag="v$app_version"
 python3 scripts/release-notes.py CHANGELOG.md "$app_version" >/dev/null
 prerelease_options=()
 publication_options=(--latest)
-if [[ "$app_version" == *-beta* ]]; then
+if [[ "$app_version" == *-beta* || "$app_version" == *-rc* ]]; then
     prerelease_options=(--prerelease)
     publication_options=(--prerelease --latest=false)
 fi

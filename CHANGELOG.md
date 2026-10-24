@@ -18,12 +18,28 @@ The project changed its public version convention before the `0.3.0` release. Hi
 | 0.4.0 | 0.4.0 / `v0.4.0` | 16 | Local activity timeline, sessions and multi-factor practice score |
 | 0.4.1 | 0.4.1 / `v0.4.1` | 17 | Accumulating score, independent XP, exact levels and personal improvement |
 | 0.5.0-beta | 0.5.0-beta / `v0.5.0-beta` | 19 | Prerelease: daily score, deferred XP settlement and refreshed rewards UI |
+| 0.5.0-rc | 0.5.0-rc / `v0.5.0-rc` | 20 | Release candidate: levels/appearance page and current-policy-only reward UI |
 
 Already published signed archives, source tags and download URLs retain their original `1.x` identifiers. Their changelog labels are normalized; their embedded app versions have not been rewritten. New releases use `0.x` app versions and tags. The internal build number continues increasing, so Sparkle can offer `0.3.0` (build 11) to apps displaying `1.2.0` (build 9) or `1.2.1` (build 10).
 
 ## [Unreleased]
 
 No changes yet.
+
+## [0.5.0-rc] - 2026-10-24
+
+Release candidate, internal build 20.
+
+### Added
+
+- Add a Levels & Appearance page with rank badges, exact current/required and remaining XP, system/light/dark appearance, a complete unlock roadmap, previews and settings.
+- Add nine themes: Classic at Level 1, Ocean 10, Prism 20, Forest 30, Ember 40, Graphite 50, Stellar 60, Rose 80 and Aurora 100. Add five menu icons: Keyboard at Level 1, Wave 5, Orbit 25, Spark 35 and Bolt 55.
+- Stagger each noninitial unlock so one milestone grants one item. Unlock speed-based menu coloring at Level 15, daily-keystroke coloring at Level 45, and custom low/high speed colors plus WPM range at Level 70. Move enhanced settlement-effect tiers to Levels 18 and 58, separate from theme unlocks at 20 and 60. Appearance choices do not change scoring, XP, filtering or level costs.
+
+### Changed
+
+- Remove the legacy `score-v2` reward disclosure/export entry and `practice-v1` score chart from the app. Keep current daily history and receipt export, raw activity, and personal-improvement/calibration details.
+- Preserve earned XP, exact migration state, existing evidence, reward ledgers, baselines and milestone claims. Retain the daily scoring and deferred-settlement policies introduced in 0.5.0-beta without resetting coverage or granting duplicate rewards.
 
 ## [0.5.0-beta] - 2026-10-24
 

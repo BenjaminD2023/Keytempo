@@ -10,10 +10,11 @@ import TypingCore
     private var settingsWindow: NSWindow?
     private var settlementWindow: NSWindow?
     private var handingOffSettlement = false
+    private var displayOptionsObserver: NSObjectProtocol?
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         if CommandLine.arguments.contains("--self-test-editor") {
-            let failures = runConfirmedEditorChecks() + runInputBufferChecks() + runAppModelChecks() + runInputLanguageChecks() + runLocalizationChecks() + runDisplayFormattingChecks()
+            let failures = runConfirmedEditorChecks() + runInputBufferChecks() + runAppModelChecks() + runInputLanguageChecks() + runLocalizationChecks() + runDisplayFormattingChecks() + runAppearanceChecks()
             print(failures.isEmpty ? "PASS: editor, language, localization, buffer and coordinator/persistence integration checks" : failures.joined(separator: "\n"))
             exit(failures.isEmpty ? 0 : 1)
         }
@@ -23,6 +24,8 @@ import TypingCore
         model.updates.start()
         model.openStats = { [weak self] in self?.showStatistics() }
         model.openSettings = { [weak self] in self?.showSettings() }
+        model.onAppearanceUpdate = { [weak self] in self?.applyAppearance(); self?.updateMenu() }
+        applyAppearance()
         model.onMenuUpdate = { [weak self] in self?.updateMenu() }
         model.onSettlementAvailable = { [weak self] in self?.presentPendingSettlement() }
         model.onInterfaceLanguageUpdate = { [weak self] in
@@ -36,6 +39,15 @@ import TypingCore
         statusItem.button?.target = self; statusItem.button?.action = #selector(togglePopover)
         statusItem.button?.font = StatusItemPresentation.font
         statusItem.button?.cell?.usesSingleLineMode = true
+        if let button = statusItem.button {
+            let observer = MenuAppearanceObserver(frame: .zero)
+            observer.onAppearanceChange = { [weak self] in self?.updateMenu() }
+            button.addSubview(observer)
+        }
+        displayOptionsObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.updateMenu() }
+            }
         popover.behavior = .transient
         popover.delegate = self
         updateMenu()
@@ -65,13 +77,21 @@ import TypingCore
         windowItem.submenu = windowMenu; menu.addItem(windowItem)
         NSApp.mainMenu = menu; NSApp.windowsMenu = windowMenu
     }
+    private func applyAppearance() {
+        guard let model else { return }
+        switch model.appearanceMode {
+        case "light": NSApp.appearance = NSAppearance(named: .aqua)
+        case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
+        default: NSApp.appearance = nil
+        }
+    }
     @objc private func checkForUpdates() { model?.updates.checkForUpdates() }
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         menuItem.action == #selector(checkForUpdates) ? (model?.updates.canCheckForUpdates ?? false) : true
     }
     private func updateMenu() {
         guard let statusItem else { return }
-        var title = "⌨"
+        var title = ""
         if model.menuDisplay == "hybrid" {
             switch model.hybridMenuDisplay {
             case .wpm(let value):
@@ -93,11 +113,20 @@ import TypingCore
             if model.phase == "idle", value != nil { title += " ·" }
         }
         if let button = statusItem.button {
-            let width = StatusItemPresentation.width(for: title, mode: model.menuDisplay)
+            let width = title.isEmpty ? 26 : StatusItemPresentation.width(for: "⌨" + title, mode: model.menuDisplay) + 6
             if statusItem.length != width { statusItem.length = width }
-            if button.title != title {
-                button.attributedTitle = NSAttributedString(string: title, attributes: [.font: StatusItemPresentation.font])
-            }
+            let dark = button.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            let customTint = model.menuAppearanceTint(dark: dark,
+                increasedContrast: NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast)
+            let foreground = customTint ?? NSColor.labelColor
+            let attributed = NSAttributedString(string: title, attributes: [.font: StatusItemPresentation.font, .foregroundColor: foreground])
+            if !button.attributedTitle.isEqual(to: attributed) { button.attributedTitle = attributed }
+            let symbol = AppAppearanceStyle.menuSymbol(style: model.effectiveMenuBarStyle)
+            var configuration = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
+            if let customTint { configuration = configuration.applying(NSImage.SymbolConfiguration(paletteColors: [customTint])) }
+            let icon = NSImage(systemSymbolName: symbol, accessibilityDescription: "Keytempo")?.withSymbolConfiguration(configuration)
+            icon?.isTemplate = customTint == nil
+            button.image = icon; button.imagePosition = .imageLeading
         }
         var tooltip = L("Keytempo · %@ · %@ · 输入速度约每秒更新。停止后保留最近值，等待不计时。WPM 为按键折算估算；KPM 可在设置中选择。", L(model.status), L("合并全部输入语言"))
         if model.menuDisplay == "hybrid" {
@@ -199,7 +228,19 @@ import TypingCore
     func applicationDidResignActive(_ notification: Notification) {
         if settlementWindow == nil && !handingOffSettlement { model?.closeSettlementPresentation() }
     }
-    func applicationWillTerminate(_ notification: Notification) { model.flushBeforeExit() }
+    func applicationWillTerminate(_ notification: Notification) {
+        if let displayOptionsObserver { NSWorkspace.shared.notificationCenter.removeObserver(displayOptionsObserver) }
+        model.flushBeforeExit()
+    }
+}
+
+/// Inherits the status button's actual appearance, including system changes
+/// while idle. No distributed/private notification or polling is required.
+@MainActor private final class MenuAppearanceObserver: NSView {
+    var onAppearanceChange: (() -> Void)?
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance(); onAppearanceChange?()
+    }
 }
 
 private struct SettlementQueueHost: View {
@@ -214,7 +255,7 @@ private struct SettlementQueueHost: View {
                                onSkipAll: { model.acknowledgeSettlement(skipAll: true) }, onClose: close)
                     .id(receipt.id).disabled(model.settlementAcknowledging)
             } else { ProgressView().frame(width: 460, height: 560) }
-        }.environment(\.locale, Locale(identifier: model.interfaceLanguage))
+        }.environment(\.locale, Locale(identifier: model.interfaceLanguage)).keytempoAppearance(model: model)
     }
 }
 

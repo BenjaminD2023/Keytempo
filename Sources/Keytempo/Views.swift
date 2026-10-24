@@ -101,6 +101,7 @@ struct MenuContent: View {
                 }
             }
             RewardMenuSummary(model: model)
+            Button(L("等级与外观…"), action: model.showAppearance).font(.callout)
             if let error = model.storageError {
                 VStack(alignment: .leading, spacing: 6) {
                     Label(L(error), systemImage: "exclamationmark.triangle")
@@ -132,6 +133,7 @@ struct MenuContent: View {
         .padding(18)
         .frame(width: 358)
         .environment(\.locale, Locale(identifier: model.interfaceLanguage))
+        .keytempoAppearance(model: model)
     }
 
     private var recentAverage: some View {
@@ -188,7 +190,6 @@ struct MenuContent: View {
 
 struct StatisticsView: View {
     @ObservedObject var model: AppModel
-    @ViewState private var tab = "today"
 
     var body: some View {
         VStack(spacing: 0) {
@@ -205,9 +206,10 @@ struct StatisticsView: View {
                 }
             }.padding(24)
 
-            Picker(L("统计页面"), selection: $tab) {
+            Picker(L("统计页面"), selection: $model.statisticsPage) {
                 Text(L("今日概况")).tag("today")
                 Text(L("活动")).tag("activity")
+                Text(L("等级与外观")).tag("appearance")
                 Text(L("历史趋势")).tag("history")
                 Text(L("验证输入")).tag("editor")
                 Text(L("统计口径")).tag("method")
@@ -220,8 +222,9 @@ struct StatisticsView: View {
 
             Divider()
             Group {
-                switch tab {
+                switch model.statisticsPage {
                 case "activity": ActivityView(model: model)
+                case "appearance": ProgressionAppearanceView(model: model)
                 case "history": history
                 case "editor": editor
                 case "method": methodology
@@ -232,9 +235,10 @@ struct StatisticsView: View {
         }
         .frame(minWidth: 740, idealWidth: 900, minHeight: 580, idealHeight: 720)
         .onChange(of: model.diagnosticsEnabled) { enabled in
-            if !enabled, tab == "diagnostics" { tab = "today" }
+            if !enabled, model.statisticsPage == "diagnostics" { model.statisticsPage = "today" }
         }
         .environment(\.locale, Locale(identifier: model.interfaceLanguage))
+        .keytempoAppearance(model: model)
     }
 
     private var today: some View {
@@ -634,6 +638,9 @@ struct SettingsView: View {
                     Button(model.isPaused ? L("恢复统计") : L("暂停统计"), action: model.togglePause)
                 }
             }
+            Section(L("外观")) {
+                Button(L("等级与外观…"), action: model.showAppearance)
+            }
             UpdateSettingsSection(updater: model.updates)
                 .id(model.interfaceLanguage)
             Section(L("段落识别")) {
@@ -718,6 +725,7 @@ struct SettingsView: View {
             Text(L("仅删除按应用保存的统计；合并统计与会话保留。此操作无法撤销。"))
         }
         .environment(\.locale, Locale(identifier: model.interfaceLanguage))
+        .keytempoAppearance(model: model)
     }
 
     private func permissionRow(_ label: String, granted: Bool, action: @escaping () -> Void) -> some View {
@@ -829,6 +837,7 @@ struct DiagnosticsView: View {
             }.padding(24).frame(maxWidth: .infinity, alignment: .leading)
         }
         .environment(\.locale, Locale(identifier: model.interfaceLanguage))
+        .keytempoAppearance(model: model)
     }
 
     private func diagnosticRow(_ title: String, _ value: String, translateValue: Bool = true) -> some View {

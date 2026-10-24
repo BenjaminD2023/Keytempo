@@ -15,8 +15,8 @@ import zipfile
 
 root = Path.cwd()
 version = plistlib.loads((root / "Resources/Info.plist").read_bytes())["CFBundleShortVersionString"]
-if len(version) > 128 or not re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-beta(?:\.(?:0|[1-9][0-9]*))?)?", version):
-    raise SystemExit("The release version must have three numeric components and an optional -beta or -beta.N suffix")
+if len(version) > 128 or not re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-(?:beta|rc)(?:\.(?:0|[1-9][0-9]*))?)?", version):
+    raise SystemExit("The release version must have three numeric components and an optional -beta[.N] or -rc[.N] suffix")
 
 required = ["Package.swift", "LICENSE", "README.md", "Resources/Info.plist"]
 for name in required:

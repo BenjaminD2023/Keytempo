@@ -59,7 +59,7 @@ struct RewardDashboard: View {
         model.dailySettlements.first { $0.day == model.rewardDayKey(model.activityDate) }
     }
     private var scoreStatus: String {
-        guard let selected else { return L("旧版／未覆盖") }
+        guard let selected else { return L("尚未覆盖") }
         if receipt != nil { return L("已结算") }
         if selected.sealed { return L("待结算") }
         return selected.preliminary ? L("初步估算") : L("当日暂定")
@@ -75,7 +75,7 @@ struct RewardDashboard: View {
                         largeValue(dailyScoreText(selected?.score), accent: .score)
                         Spacer(minLength: 5)
                         if selected?.score == nil {
-                            Text(selected == nil ? L("旧版／未覆盖") : L("数据不足"))
+                            Text(selected == nil ? L("尚未覆盖") : L("数据不足"))
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }
@@ -106,7 +106,7 @@ struct RewardDashboard: View {
             Label(selected?.sealed == true ? L("等待下一次熄屏或睡眠结算") : L("日界线后，熄屏或睡眠时结算"), systemImage: "moon")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         } else {
-            Text(L("旧版／未覆盖")).font(.caption).foregroundStyle(.secondary)
+            Text(L("尚未覆盖")).font(.caption).foregroundStyle(.secondary)
         }
     }
     private func largeValue(_ value: String, accent: RewardAccent) -> some View {
@@ -169,7 +169,7 @@ struct RewardDetails: View {
                     }.font(.caption).foregroundStyle(.secondary).padding(.top, 8)
                 }
                 calibration
-                legacyDetails
+                Button(L("导出每日奖励 CSV…"), action: model.exportDailyRewards)
             }
         }
     }
@@ -212,18 +212,6 @@ struct RewardDetails: View {
                         }
                     }
                     Text(L("进步验证使用最近 7 个合格完成日，至少 3 日、30 分钟；汇总值和至少 3 个单日均须达标。速度每提升 5% 或稳定度每提升 5 点，各奖励 750 XP，退步再恢复不重复领奖。"))
-                }.font(.caption).foregroundStyle(.secondary).padding(.top, 8)
-            }
-        }
-    }
-    @ViewBuilder private var legacyDetails: some View {
-        if let state = model.rewardState {
-            Button(L("导出每日奖励 CSV…"), action: model.exportDailyRewards)
-            DisclosureGroup(L("旧版奖励记录（score-v2）")) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(L("旧算法积分：%@", rewardPointText(state.lifetimeScore.total)))
-                    Text(L("旧版单位和当前每日分数分开保留，不相加。"))
-                    Button(L("导出旧版奖励 CSV…"), action: model.exportRewards)
                 }.font(.caption).foregroundStyle(.secondary).padding(.top, 8)
             }
         }

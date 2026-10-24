@@ -262,6 +262,40 @@ struct HistoryDay: Identifiable {
     @Published var commitsEnglish = 0
     @Published var commitsChinese = 0
     private(set) var recentEvidence: Evidence = .probable
+    @Published private(set) var appearanceMode = "system"
+    @Published private(set) var appearanceTheme = "classic"
+    @Published private(set) var menuBarStyle = "keyboard"
+    @Published private(set) var menuColorMode = "system"
+    @Published private(set) var menuCustomGradientEnabled = false
+    @Published private(set) var menuLowColorHex = "146B63"
+    @Published private(set) var menuHighColorHex = "945F12"
+    @Published private(set) var menuGradientLowWPM = 20.0
+    @Published private(set) var menuGradientHighWPM = 120.0
+    var effectiveMenuCustomGradientEnabled: Bool { menuCustomGradientEnabled && appearanceLevel >= AppearanceCatalog.customGradientLevel }
+    @Published var statisticsPage = "today"
+    private let appearanceStorage: UserDefaults?
+    var onAppearanceUpdate: (() -> Void)?
+    var appearanceLevel: Int { DailyLevelProgress(totalXP: dailyRewardState?.totalXP ?? 0)?.level ?? 1 }
+    var effectiveAppearanceTheme: String { AppearancePolicy.effective(appearanceTheme, choice: .theme, level: appearanceLevel) }
+    var effectiveMenuBarStyle: String { AppearancePolicy.effective(menuBarStyle, choice: .icon, level: appearanceLevel) }
+    var effectiveMenuColorMode: String { AppearancePolicy.effective(menuColorMode, choice: .color, level: appearanceLevel) }
+    var appearanceMenuWPM: Double? {
+        guard !isPaused, hasInputPermission, !selectedSpeedIsRecent, phase != "idle" else { return nil }
+        let speed = selectedMenuSpeed
+        if speed.unit == "WPM" { return speed.value }
+        if speed.unit == "KPM" { return speed.value.map { $0 / 5 } }
+        return nil
+    }
+    func menuAppearanceTint(dark: Bool, increasedContrast: Bool) -> NSColor? {
+        guard !isPaused, hasInputPermission, !increasedContrast else { return nil }
+        if effectiveMenuColorMode == "speed", effectiveMenuCustomGradientEnabled, let wpm = appearanceMenuWPM,
+           let custom = AppAppearanceStyle.gradientTint(wpm: wpm, lowHex: menuLowColorHex, highHex: menuHighColorHex,
+                lowWPM: menuGradientLowWPM, highWPM: menuGradientHighWPM, dark: dark) {
+            return AppAppearanceStyle.accessibleTint(custom, dark: dark)
+        }
+        return AppAppearanceStyle.menuTint(mode: effectiveMenuColorMode, wpm: appearanceMenuWPM,
+                                           keys: dailyEstimate.keys, dark: dark)
+    }
     var onMenuUpdate: (() -> Void)?
     var onInterfaceLanguageUpdate: (() -> Void)?
     var openStats: (() -> Void)?, openSettings: (() -> Void)?
@@ -349,8 +383,21 @@ struct HistoryDay: Identifiable {
         let c = Calendar.current.dateComponents([.year, .month, .day], from: date)
         return String(format: "%04d-%02d-%02d", c.year!, c.month!, c.day!)
     }
-    init(dataDirectory: URL? = nil, monitoringEnabled: Bool = true, perAppTracking: Bool? = nil) {
+    init(dataDirectory: URL? = nil, monitoringEnabled: Bool = true, perAppTracking: Bool? = nil, appearancePreferences: UserDefaults? = nil) {
         self.monitoringEnabled = monitoringEnabled
+        appearanceStorage = appearancePreferences ?? (monitoringEnabled ? .standard : nil)
+        appearanceMode = AppearancePolicy.mode(appearanceStorage?.string(forKey: "appearanceMode") ?? "system")
+        appearanceTheme = appearanceStorage?.string(forKey: "appearanceTheme") ?? "classic"
+        menuBarStyle = appearanceStorage?.string(forKey: "menuBarStyle") ?? "keyboard"
+        menuColorMode = appearanceStorage?.string(forKey: "menuColorMode") ?? "system"
+        menuCustomGradientEnabled = appearanceStorage?.bool(forKey: "menuCustomGradientEnabled") ?? false
+        menuLowColorHex = AppearancePolicy.hex(appearanceStorage?.string(forKey: "menuLowColorHex") ?? "") ?? "146B63"
+        menuHighColorHex = AppearancePolicy.hex(appearanceStorage?.string(forKey: "menuHighColorHex") ?? "") ?? "945F12"
+        if let low = appearanceStorage?.object(forKey: "menuGradientLowWPM") as? Double,
+           let high = appearanceStorage?.object(forKey: "menuGradientHighWPM") as? Double,
+           AppearancePolicy.validRange(low: low, high: high) {
+            menuGradientLowWPM = low; menuGradientHighWPM = high
+        }
         if let perAppTracking { perAppTrackingEnabled = perAppTracking }
         let gap = UserDefaults.standard.object(forKey: "maximumGap") as? Double ?? 3
         let filterSuspected = UserDefaults.standard.object(forKey: "suspectedInputFilteringEnabled") as? Bool ?? true
@@ -918,6 +965,43 @@ struct HistoryDay: Identifiable {
     }
     func showStats() { openStats?() }
     func showSettings() { refreshInputLanguages(); openSettings?() }
+    func showAppearance() { statisticsPage = "appearance"; openStats?() }
+    func setAppearanceMode(_ value: String) {
+        appearanceMode = AppearancePolicy.mode(value)
+        appearanceStorage?.set(appearanceMode, forKey: "appearanceMode"); onAppearanceUpdate?()
+    }
+    func setAppearanceTheme(_ value: String) {
+        guard AppearancePolicy.effective(value, choice: .theme, level: appearanceLevel) == value else { return }
+        appearanceTheme = value; appearanceStorage?.set(value, forKey: "appearanceTheme"); onAppearanceUpdate?()
+    }
+    func setMenuBarStyle(_ value: String) {
+        guard AppearancePolicy.effective(value, choice: .icon, level: appearanceLevel) == value else { return }
+        menuBarStyle = value; appearanceStorage?.set(value, forKey: "menuBarStyle"); onAppearanceUpdate?()
+    }
+    func setMenuColorMode(_ value: String) {
+        guard AppearancePolicy.effective(value, choice: .color, level: appearanceLevel) == value else { return }
+        menuColorMode = value; appearanceStorage?.set(value, forKey: "menuColorMode"); onAppearanceUpdate?()
+    }
+    func setMenuCustomGradientEnabled(_ value: Bool) {
+        guard appearanceLevel >= AppearanceCatalog.customGradientLevel else { return }
+        menuCustomGradientEnabled = value; appearanceStorage?.set(value, forKey: "menuCustomGradientEnabled")
+        if value { setMenuColorMode("speed") }
+        onAppearanceUpdate?()
+    }
+    func setMenuLowColorHex(_ value: String) {
+        guard appearanceLevel >= AppearanceCatalog.customGradientLevel, let hex = AppearancePolicy.hex(value) else { return }
+        menuLowColorHex = hex; appearanceStorage?.set(hex, forKey: "menuLowColorHex"); onAppearanceUpdate?()
+    }
+    func setMenuHighColorHex(_ value: String) {
+        guard appearanceLevel >= AppearanceCatalog.customGradientLevel, let hex = AppearancePolicy.hex(value) else { return }
+        menuHighColorHex = hex; appearanceStorage?.set(hex, forKey: "menuHighColorHex"); onAppearanceUpdate?()
+    }
+    func setMenuGradientRange(low: Double, high: Double) {
+        guard appearanceLevel >= AppearanceCatalog.customGradientLevel, AppearancePolicy.validRange(low: low, high: high) else { return }
+        menuGradientLowWPM = low; menuGradientHighWPM = high
+        appearanceStorage?.set(low, forKey: "menuGradientLowWPM"); appearanceStorage?.set(high, forKey: "menuGradientHighWPM")
+        onAppearanceUpdate?()
+    }
     func setInterfaceLanguage(_ code: String) {
         let selected = code == "en" ? "en" : "zh-Hans"
         UserDefaults.standard.set(selected, forKey: "interfaceLanguage")
@@ -2276,7 +2360,11 @@ extension AppModel {
 
     private func publishDailyRewards() {
         guard let state = dailyRewardEngine?.state else { return }
-        if dailyRewardState != state { dailyRewardState = state }
+        if dailyRewardState != state {
+            let changedXP = dailyRewardState?.totalXP != state.totalXP
+            dailyRewardState = state
+            if changedXP { onAppearanceUpdate?() }
+        }
         var rows = Dictionary(loadedDailySettlements.map { ($0.id, $0) }, uniquingKeysWith: { _, b in b })
         for receipt in (inFlightWrite?.dailyRewards?.receipts ?? []) + (retryWrite?.dailyRewards?.receipts ?? []) + (dailyRewardEngine?.unpersistedReceipts ?? []) {
             rows[receipt.id] = receipt

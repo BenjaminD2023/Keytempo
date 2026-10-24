@@ -8,8 +8,8 @@ import re
 
 
 def release_changes(changelog: Path, version: str) -> str:
-    if len(version) > 128 or not re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-beta(?:\.(?:0|[1-9][0-9]*))?)?", version):
-        raise ValueError("Version must have three numeric components and an optional -beta or -beta.N suffix")
+    if len(version) > 128 or not re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-(?:beta|rc)(?:\.(?:0|[1-9][0-9]*))?)?", version):
+        raise ValueError("Version must have three numeric components and an optional -beta[.N] or -rc[.N] suffix")
     if changelog.stat().st_size > 1_000_000:
         raise ValueError("Changelog exceeds the release-note size limit")
     lines = changelog.read_text(encoding="utf-8").splitlines()
