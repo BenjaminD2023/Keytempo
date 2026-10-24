@@ -63,7 +63,7 @@ final class ProgressionStoreTests {
             DROP TABLE reward_attributions; DROP TABLE reward_daily; DROP TABLE reward_improvement_claims; PRAGMA user_version=4;
             """, at: url)
         let db = try AggregateStore(url: url, now: base, timeZone: utc)
-        #expect(try scalar("PRAGMA user_version", at: url) == "5")
+        #expect(try scalar("PRAGMA user_version", at: url) == "6")
         #expect(try db.query(since: "0000") == [daily()])
         #expect(try db.queryHourly(since: base, until: base.addingTimeInterval(3600)) == before)
         #expect(try db.loadRewardState() == nil)
@@ -226,12 +226,12 @@ final class ProgressionStoreTests {
         #expect(throws: (any Error).self) { try db.loadRewardState() }
     }
 
-    @Test func futureV6IsRejectedBeforeMutation() throws {
+    @Test func futureV7IsRejectedBeforeMutation() throws {
         let url = location(); defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
-        try execute("CREATE TABLE future_data(value TEXT); INSERT INTO future_data VALUES('keep'); PRAGMA user_version=6", at: url)
+        try execute("CREATE TABLE future_data(value TEXT); INSERT INTO future_data VALUES('keep'); PRAGMA user_version=7", at: url)
         let mode = try scalar("PRAGMA journal_mode", at: url)
         #expect(throws: (any Error).self) { try AggregateStore(url: url, now: self.base, timeZone: self.utc) }
-        #expect(try scalar("PRAGMA user_version", at: url) == "6")
+        #expect(try scalar("PRAGMA user_version", at: url) == "7")
         #expect(try scalar("PRAGMA journal_mode", at: url) == mode)
         #expect(try scalar("SELECT value FROM future_data", at: url) == "keep")
     }

@@ -8,6 +8,8 @@ import TypingCore
     private var model: AppModel!
     private var statsWindow: NSWindow?
     private var settingsWindow: NSWindow?
+    private var settlementWindow: NSWindow?
+    private var handingOffSettlement = false
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         if CommandLine.arguments.contains("--self-test-editor") {
@@ -22,6 +24,7 @@ import TypingCore
         model.openStats = { [weak self] in self?.showStatistics() }
         model.openSettings = { [weak self] in self?.showSettings() }
         model.onMenuUpdate = { [weak self] in self?.updateMenu() }
+        model.onSettlementAvailable = { [weak self] in self?.presentPendingSettlement() }
         model.onInterfaceLanguageUpdate = { [weak self] in
             guard let self else { return }
             self.installApplicationMenu()
@@ -108,15 +111,19 @@ import TypingCore
     @objc private func togglePopover() {
         model.monitor.checkSystemState()
         model.refreshSnapshot()
-        if popover.isShown { popover.performClose(nil) }
+        if popover.isShown { popover.performClose(nil); model.closeSettlementPresentation() }
         else if let button = statusItem.button {
             // The menu graph exists only while visible; background snapshots
             // should not rebuild a hidden SwiftUI hierarchy.
             popover.contentViewController = NSHostingController(rootView: MenuContent(model: model))
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            model.requestSettlementPresentation()
         }
     }
-    func popoverDidClose(_ notification: Notification) { popover.contentViewController = nil }
+    func popoverDidClose(_ notification: Notification) {
+        popover.contentViewController = nil
+        if !handingOffSettlement { model.closeSettlementPresentation() }
+    }
     private func window<V: View>(title: String, view: V, size: NSSize) -> NSWindow {
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = title; window.contentViewController = NSHostingController(rootView: view)
@@ -130,20 +137,54 @@ import TypingCore
         model.statisticsVisible = true
         if model.historyVisible { model.loadHistory(days: model.historyDays) }
         NSApp.activate(ignoringOtherApps: true); statsWindow?.makeKeyAndOrderFront(nil)
+        model.requestSettlementPresentation()
     }
     @objc private func showSettings() {
         model.refreshInputLanguages()
         popover.performClose(nil)
         if settingsWindow == nil { settingsWindow = window(title: L("Keytempo · 设置"), view: SettingsView(model: model), size: NSSize(width: 700, height: 700)) }
         NSApp.activate(ignoringOtherApps: true); settingsWindow?.makeKeyAndOrderFront(nil)
+        model.requestSettlementPresentation()
+    }
+    private func presentPendingSettlement() {
+        guard model.settlementReceipt != nil else { dismissSettlement(); return }
+        handingOffSettlement = true
+        defer { handingOffSettlement = false }
+        popover.performClose(nil)
+        if settlementWindow == nil {
+            let value = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 460, height: 560),
+                                styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
+            value.title = L("Keytempo · 每日结算"); value.titleVisibility = .hidden
+            value.titlebarAppearsTransparent = true; value.isMovableByWindowBackground = true
+            value.standardWindowButton(.closeButton)?.isHidden = true
+            value.standardWindowButton(.miniaturizeButton)?.isHidden = true
+            value.standardWindowButton(.zoomButton)?.isHidden = true
+            value.isReleasedWhenClosed = false; value.delegate = self
+            value.contentViewController = NSHostingController(rootView: SettlementQueueHost(model: model, close: { [weak self] in self?.dismissSettlement() }))
+            value.center(); settlementWindow = value
+        }
+        NSApp.activate(ignoringOtherApps: true); settlementWindow?.makeKeyAndOrderFront(nil)
+    }
+    private func dismissSettlement() {
+        let window = settlementWindow; settlementWindow = nil
+        model?.closeSettlementPresentation()
+        window?.contentViewController = nil; window?.close()
+    }
+    func windowDidResignKey(_ notification: Notification) {
+        if let window = notification.object as? NSWindow, window === settlementWindow { dismissSettlement() }
     }
     func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow else { return }
         if window === statsWindow {
+            if settlementWindow == nil { model.closeSettlementPresentation() }
             model.statisticsVisible = false; model.historyVisible = false; model.releaseHistory(); model.releaseActivity(); model.interruptConfirmed()
             // Drop editor/Charts state after closing; the menu does not retain a hidden dashboard.
             window.contentViewController = nil; statsWindow = nil
-        } else if window === settingsWindow { window.contentViewController = nil; settingsWindow = nil }
+        } else if window === settingsWindow {
+            if settlementWindow == nil { model.closeSettlementPresentation() }
+            window.contentViewController = nil; settingsWindow = nil
+        }
+        else if window === settlementWindow { dismissSettlement() }
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -153,8 +194,28 @@ import TypingCore
     func applicationDidBecomeActive(_ notification: Notification) {
         model?.monitor.checkSystemState(); model?.refreshSnapshot()
         model?.refreshHistoryIfVisible()
+        if settlementWindow == nil && (statsWindow?.isVisible == true || settingsWindow?.isVisible == true) { model?.requestSettlementPresentation() }
+    }
+    func applicationDidResignActive(_ notification: Notification) {
+        if settlementWindow == nil && !handingOffSettlement { model?.closeSettlementPresentation() }
     }
     func applicationWillTerminate(_ notification: Notification) { model.flushBeforeExit() }
+}
+
+private struct SettlementQueueHost: View {
+    @ObservedObject var model: AppModel
+    let close: () -> Void
+    var body: some View {
+        Group {
+            if let receipt = model.settlementReceipt {
+                SettlementView(presentation: SettlementPresentation(receipt), position: model.settlementQueuePosition,
+                               count: model.settlementQueueCount,
+                               onNext: { model.acknowledgeSettlement() },
+                               onSkipAll: { model.acknowledgeSettlement(skipAll: true) }, onClose: close)
+                    .id(receipt.id).disabled(model.settlementAcknowledging)
+            } else { ProgressView().frame(width: 460, height: 560) }
+        }.environment(\.locale, Locale(identifier: model.interfaceLanguage))
+    }
 }
 
 let app = NSApplication.shared

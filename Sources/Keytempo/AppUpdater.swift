@@ -54,4 +54,10 @@ import Sparkle
     func updater(_ updater: SPUUpdater, willInstallUpdate item: SUAppcastItem) {
         beforeInstall?()
     }
+
+    /// Beta builds follow beta plus stable releases. Stable builds retain
+    /// Sparkle's default stable-only discovery behavior.
+    func allowedChannels(for updater: SPUUpdater) -> Set<String> {
+        version.contains("-beta") ? ["beta"] : []
+    }
 }

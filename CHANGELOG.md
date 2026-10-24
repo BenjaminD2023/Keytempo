@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Keytempo are recorded here, following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and three-part version numbers. Keytempo uses the `0.x` series while its input coverage and statistical policies are still evolving.
+All notable changes to Keytempo are recorded here, following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and three-part version numbers with explicit prerelease suffixes. Keytempo uses the `0.x` series while its input coverage and statistical policies are still evolving.
 
 ## Version-number normalization
 
@@ -17,10 +17,37 @@ The project changed its public version convention before the `0.3.0` release. Hi
 | 0.3.2 | 0.3.2 / `v0.3.2` | 15 | Combined language metrics and clearer menu behavior |
 | 0.4.0 | 0.4.0 / `v0.4.0` | 16 | Local activity timeline, sessions and multi-factor practice score |
 | 0.4.1 | 0.4.1 / `v0.4.1` | 17 | Accumulating score, independent XP, exact levels and personal improvement |
+| 0.5.0-beta | 0.5.0-beta / `v0.5.0-beta` | 19 | Prerelease: daily score, deferred XP settlement and refreshed rewards UI |
 
 Already published signed archives, source tags and download URLs retain their original `1.x` identifiers. Their changelog labels are normalized; their embedded app versions have not been rewritten. New releases use `0.x` app versions and tags. The internal build number continues increasing, so Sparkle can offer `0.3.0` (build 11) to apps displaying `1.2.0` (build 9) or `1.2.1` (build 10).
 
 ## [Unreleased]
+
+No changes yet.
+
+## [0.5.0-beta] - 2026-10-24
+
+### Added
+
+- Add a daily Typing Score combining weighted estimated WPM, Monkeytype-style pooled one-second rate consistency, measured typing time and accepted keys. The formula has no product cap and rewards sustained practice as well as performance; insufficient or incompatible evidence stays unavailable.
+- Convert each finalized daily score to ordinary XP one for one, with 750 additional XP for each newly verified personal-improvement milestone. Preserve frozen baselines, completed-day verification and one-time claims so short bursts do not mint progress bonuses.
+- Close reward days at midnight in their persisted timezone and defer XP settlement until display sleep, system sleep or shutdown if the computer remains in use. Catch up ended days after an observed rest without forcing a sleeping computer awake.
+- Automatically present committed unseen settlements in date order on the next menu/app opening, with skip-one/skip-all controls, finite level-up effects, higher visual tiers at levels 20 and 60, and static Reduce Motion feedback. Presentation acknowledgements do not award or revoke XP.
+- Add transactional daily reward checkpoints, immutable settlement receipts, permanent duplicate-claim protection, local receipt export and coverage-aware daily history. Start the new daily policy on first activation without fabricating past scores.
+- Add a signed beta update channel and prerelease-safe source packaging, release-note extraction and publication. Keep stable installations on the stable update channel and preserve existing feed item bytes.
+
+### Changed
+
+- Place daily Typing Score and pending/settled XP side by side, with four activity metrics below and lifetime XP/level progress displayed separately. Refresh the daily snapshot with accepted input and retain a clearly labeled legacy rewards disclosure.
+- Multiply existing XP and all exact level thresholds by 150 during migration, preserving the previous level and proportional progress while accommodating larger daily XP awards. There is no fixed maximum level.
+- Refresh native reward cards and settlement visuals with teal score accents, gold XP, SF Symbol medallions and restrained material. Remove the settlement-review navigation entry and the score's ceiling label; settlements open automatically.
+- Include the previously unreleased 0.4.2 Activity presentation work in this beta. Hour/session tables retain counts, measured time and weighted WPM without presenting old block rewards as the new daily score.
+
+### Fixed
+
+- Wrap Activity metric labels at narrow widths so full English and Simplified Chinese rate/consistency labels remain readable in equal-width cards.
+- Keep settlement persistence and animation acknowledgement separate so retries, reopening a window and skipped animations cannot add duplicate XP. Retain unpaid days when the app relaunches awake without evidence of a rest boundary.
+- Cancel pending popups when their originating UI closes, retain bounded save retries during presentation requests, and wait for the requested checkpoint before exporting daily receipts.
 
 ## [0.4.1] - 2026-10-24
 

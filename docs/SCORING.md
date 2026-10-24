@@ -1,243 +1,186 @@
-# Typing Score, XP and levels
+# Daily Typing Score, XP and levels
 
-This document describes Keytempo 0.4.1's accumulating rewards. It is a local personal-practice system, not an accuracy test, semantic-content detector, productivity measure or certified typing-skill assessment. Global WPM remains an accepted-operation estimate, including supported composition and editing; it is not an actual word or Chinese-character count.
+This document describes **0.5.0-beta**: `daily-score-v3`, `daily-xp-v2` and `levels-v2-150`. It supersedes the accumulating block score as the primary interface. Published 0.4.1 records remain legacy; their values and earned XP are preserved.
+
+Keytempo's score is an explainable personal-practice index. It is not an accuracy test, a productivity measure, a semantic-content detector or a certified skill assessment. Estimated WPM measures accepted input operations, including supported composition and editing, rather than actual words or committed Chinese characters.
 
 ## Policies and coverage
 
-| Policy | Identifier | Meaning |
+| Policy | Identifier | Status |
 |---|---|---|
-| Historical score | `practice-v1` | Original 0–100, four-component practice index |
-| Accumulating points | `score-v2` | Daily logarithmic base points and settled block bonuses |
-| Practice XP | `xp-v1` | Independent time, key and verified-improvement XP |
-| Improvement evidence | `improvement-v1` | Frozen context baselines and completed-day verification |
-| Level schedule | `levels-v1` | Exact whole-XP thresholds |
+| Daily state | `daily-rewards-v1` | Open days, settlement and migration |
+| Daily score | `daily-score-v3` | Current daily index |
+| Daily XP | `daily-xp-v2` | Final score converted to whole XP, plus verified improvement |
+| Level schedule | `levels-v2-150` | Exact thresholds scaled 150× |
+| Improvement evidence | `improvement-v1` | Retained frozen baselines and completed-day verification |
+| Legacy points / XP | `score-v2` / `xp-v1` | Preserved ledger; not the primary daily score or ordinary XP source |
+| Original practice score | `practice-v1` | Historical 0–100 index, explicitly legacy |
 
-New reward coverage begins at first activation after the 0.4.1 migration. Existing daily/activity history and legacy score information are preserved. Old totals cannot reconstruct canonical 100-key blocks, new one-second samples or comparable improvement baselines; this version does not invent those records or backfill XP. New score charts sum awarded points and leave uncovered legacy dates distinct from zero earned points. Existing performance indicators and legacy exports remain separate.
+New daily-score coverage starts at first activation of the beta. Old daily totals cannot reconstruct complete one-second consistency samples or compatible new-policy evidence; no past scores or ordinary XP are fabricated. Existing input history, reward ledgers, baselines and milestone claims survive the additive migration. An uncovered date is unavailable, not a zero score.
 
-The progression timezone is initialized from the system timezone once and persisted. Reward days end at midnight in that fixed timezone, including its daylight-saving rules. Changing the OS timezone does not create a new daily budget. The current reward-day key does not move backward with a clock correction. Neither calendar changes nor elapsed wall time creates measured typing time; accepted monotonic intervals supply time.
+Reward days use the persisted progression timezone, inherited from existing rewards when present. Changing the system timezone does not start a fresh budget. The logical current day does not move backward after a clock correction. Calendar changes never create typing time.
 
-## One accepted stream
+## One accepted stream and actual time
 
-Progression consumes the existing classified **global probable-input** stream once. It does not sum daily, hourly, session and per-app rows as separate input. Accepted text-entry, composition and editing operations retain their existing meanings. The validation editor is excluded from ordinary progression.
+The daily engine consumes the classified **global probable-input** stream once. It does not sum daily, hourly, session or optional app records as separate input. The confirmed validation editor remains outside everyday rewards. Existing shortcut, space, navigation, auto-repeat, generated-input, excluded-app and text-context filters remain active; Chinese compatibility mode retains its estimation limits.
 
-Only the segmentation engine's accepted intervals contribute actual time. First keys can count without a measurable predecessor. Pauses, commands, focus/source changes, sleep, missing permissions and other real continuity boundaries end measurable runs. A five-minute activity session can contain several runs. No timeout tail, elapsed session span, live wall clock or relaunch gap earns time.
+Only accepted monotonic intervals supply time. A chain's first operation counts as a key but has no predecessor interval. Pauses, commands, focus/source changes, sleep, missing permissions and other interruptions end continuity. No timeout tail, session span, wall-clock timer or relaunch gap earns time. In particular, waiting to confirm idle or to settle a day adds neither time nor rate samples.
 
-Existing shortcut, space, navigation, repeat, generated-input, context and excluded-app rules remain in place. Compatibility-mode estimates retain their existing disclosures. The rewards system does not inspect text or claim it can distinguish every macro from intentional input.
-
-## Incremental base points
-
-For a reward day's already accepted seconds `t` and keystrokes `K`:
+Let `N` be the sum of accepted interval weights and `t` their full measured duration in seconds:
 
 ```text
-TimePoints(t)   = 60 × ln(1 + t / 3600)
-VolumePoints(K) = 60 × ln(1 + K / 15000)
-A(t,K)         = TimePoints(t) + VolumePoints(K)
+estimated WPM = 12 × N / t
 ```
 
-For new accepted `(dt,dK)`, the actual award is:
+This weights intervals by actual time; it does not average displayed speeds or replace slow intervals with a threshold. A day's keys `K` include first keys, so `N` is not mechanically `K−1` when there are several chains. Calendar-boundary splits preserve proportional interval weights and actual duration without inventing extra observations.
+
+## Daily score
+
+For one compatible reward day's aggregate evidence:
 
 ```text
-dTimePoints   = 60 × log1p(dt / (3600 + t_before))
-dVolumePoints = 60 × log1p(dK / (15000 + K_before))
-dBase         = dTimePoints + dVolumePoints
+W = weighted estimated WPM
+C = standalone pooled Monkeytype-style consistency, on 0–100
+T = measured typing seconds / 60
+K = accepted keystrokes
+
+practice = T + K / 300
+Score = round(150 × sqrt(practice) × sqrt(W / 50) × exp((C − 75) / 100))
 ```
 
-Then the day's counters advance. The complete daily formula is never added again on every update. These increments telescope to `A(t,K)` for a fixed day, apart from floating-point summation roundoff. `log1p` improves behavior for small deltas. Internal values keep full precision; the UI displays points to one decimal place.
+The final result is a nonnegative whole number, rounded to nearest with positive halves upward. There is **no product ceiling**, component quota or fixed performance/practice percentage. Additional measured time and accepted keys increase practice evidence, speed uses a square-root factor, and consistency supplies a smooth exponential factor. These constants are transparent product heuristics, not population norms or statistically calibrated weights.
 
-Initially each measured minute and each 250 accepted keys contribute about one point independently. Marginal returns decrease during a day but never hit a hard cap. An isolated key earns volume progress without invented time. Pauses, sessions, app changes, checkpoints, relaunches and window changes do not reset the daily counters. Weekly and lifetime scores **sum actual daily awards**, rather than applying the logarithm to pooled week/lifetime activity. Nothing subtracts previously earned points.
+Score recomputes from the day's totals as accepted input arrives. It can decline when the day's weighted speed or consistency declines; it is not an accumulating award ledger. Pending XP follows the current score and can also change. Committed lifetime XP is separate and never reduced because later typing is slower. Days below five measured minutes or 1,000 keys are marked preliminary; this label does not add a second reward or silently discard their data.
 
-## Canonical blocks and speed bonus
+The aggregate must be valid, have at least **20 accepted intervals and two measured seconds**, and provide both WPM and complete consistency evidence. Consistency additionally needs ten complete one-second samples and twenty represented intervals. Insufficient evidence, incompatible counting rules, invalid moments or numeric overflow yield unavailable score, never a guessed zero/perfect value. Keys and measured time remain visible. A finalized day without enough score evidence has zero ordinary XP and an explicitly unavailable score.
 
-The accepted input order defines blocks of 100 keys. Ordinary interruptions end run fragments, but not the block. A partial block survives a checkpoint or relaunch. Its final bonuses settle at the reward-day boundary using its actual key count. Incompatible measurement/evidence policies settle the old partial block under its own policy; daily budgets and XP remainders continue.
+### Numerical examples
 
-Each persisted block contains counts, already credited time/volume points, aggregate speed evidence, fragment/quality moments, attribution aggregates, stable identity and policy. It contains no text or individual interval sequence.
+| WPM | Consistency | Measured minutes | Accepted keys | Score / ordinary XP |
+|---:|---:|---:|---:|---:|
+| 50 | 80 | 5 | 1,250 | 477 |
+| 50 | 80 | 15 | 3,750 | 827 |
+| 50 | 80 | 30 | 7,500 | 1,169 |
+| 50 | 80 | 60 | 15,000 | 1,654 |
+| 78 | 88 | 41 | 16,001 | **2,072** |
+| 120 | 95 | 240 | 144,048 | 7,617 |
 
-For a block with `k > 0` keys and usable speed evidence `(Nw,tw)`:
+These formula examples assume the stated aggregate WPM and consistency have valid coverage. For the 78-WPM example, 15,990 accepted intervals over 2,460 seconds give exactly 78 WPM; the remaining eleven keys are chain starts. One coherent uninterrupted chain need not have the example's exact key count. Hundreds to a few thousand daily XP are typical examples, not a floor or a 5,000-XP cap.
+
+Time and key volume are related during steady input; the formula intentionally gives both explicit contributions. It does not prove that practice was useful or distinguish arbitrary text from meaningful writing. Content shape, repeated words, code and punctuation are not semantic spam evidence. Existing optional metadata filters cannot detect every macro.
+
+## Monkeytype-style consistency
+
+The mapping follows Monkeytype's pinned [Kogasa function](https://github.com/monkeytypegame/monkeytype/blob/128e4029048f72d3a8106941c4c4602f60c51b24/packages/util/src/numbers.ts) and its [variation in per-second rates](https://github.com/monkeytypegame/monkeytype/blob/128e4029048f72d3a8106941c4c4602f60c51b24/frontend/src/ts/test/test-logic.ts). Keytempo uses filtered operation estimates and different continuity/evidence gates, so its number is not directly interchangeable with a Monkeytype test result.
+
+A sampler starts half-open one-second bins at the beginning of a proven accepted interval chain. The chain's first operation counts once; later accepted interval endpoints contribute further operations. An operation exactly at a bin boundary belongs to the next bin. A bin is complete only when observed accepted coverage reaches its end. Zero-operation full seconds inside a proven chain are included. No timer adds future zero samples. An interruption discards only the unfinished trailing bin; completed samples remain in aggregate moments.
+
+The daily engine pools completed sample counts, sums and squared sums. Operation counts or those counts multiplied by twelve have the same coefficient of variation:
 
 ```text
-WPM      = 12 × Nw / tw
-S        = min(1, log1p(WPM / 50) / log1p(160 / 50))
-q(N,k)   = min(1,N/40) × min(1,N/k)
-qW       = q(Nw,k)
-speedBonus = 0.25 × blockBase × qW × S
+mean = sum(sample rates) / sample count
+variance = sum(sample rates²) / sample count − mean²
+CV = sqrt(population variance) / mean
+C = 100 × (1 − tanh(CV + CV³ / 3 + CV⁵ / 5))
 ```
 
-Speed requires `Nw >= 20` and `tw >= 2 seconds`; otherwise its bonus is zero. `Nw` is an observed interval count/weight, not the block's key count. In a fresh 100-key run it is 99; later blocks and interruptions need their actual evidence rather than mechanically using `k−1`.
+`C` is bounded to 0–100 and rounded to two decimals by the standalone sampler before the daily formula uses it. At least ten complete samples, twenty represented accepted intervals and a positive sampled mean are required. Negligible negative variance caused by floating-point roundoff is tolerated; corrupt/nonfinite evidence is rejected. Missing evidence is absent, not zero consistency.
 
-Intervals crossing calendar/hour boundaries preserve the segmentation engine's proportional interval weights and actual seconds. A split does not become several independent observations. Waiting for classification or settlement never adds time.
+This **pooled standalone consistency is the same value shown by Activity and used in the daily score**. Runs at different means can increase pooled variation. The retained legacy improvement evaluator normalizes each run/block fragment before interval-weighted combination of CV², then applies the same Kogasa mapping. That preserves comparability with its frozen baselines; its value can differ from daily standalone consistency. Neither metric is accuracy or raw inter-key-gap regularity.
 
-## Monkeytype-style consistency bonus
+## XP and settlement lifecycle
 
-The final user-selected consistency method uses **completed one-second operation-rate samples**, replacing the earlier proposed raw-interval-CV bonus. The mapping follows Monkeytype's [Kogasa function](https://github.com/monkeytypegame/monkeytype/blob/128e4029048f72d3a8106941c4c4602f60c51b24/packages/util/src/numbers.ts); its [consistency calculation](https://github.com/monkeytypegame/monkeytype/blob/128e4029048f72d3a8106941c4c4602f60c51b24/frontend/src/ts/test/test-logic.ts) uses variation in per-second rates. Keytempo has different context filtering, continuity boundaries and evidence defaults, so its result is not a directly comparable Monkeytype test score.
+Ordinary XP is the finalized daily score **1:1**, with no daily cap. The current day's number is pending, not already committed lifetime XP. Additional verified-improvement XP is awarded through the existing completed-day gates below; the legacy time/key XP counters do not independently add ordinary XP to the new balance after migration.
 
-A fragment is an uninterrupted run's intersection with a reward block. One-second half-open bins start at its first proven accepted-chain input. That first input counts once; each subsequent accepted interval endpoint contributes another operation. An input exactly on a bin boundary belongs to the next bin. The bin is emitted only after accepted interval coverage reaches its end. Zero-count full seconds inside a proven accepted chain are included. No timer emits future zero samples, and trailing incomplete seconds are discarded at interruption. A block/day fence cannot create a new accepted interval or bridge missing coverage.
+1. At midnight in the persisted reward timezone, the previous day is sealed and the new day starts separately. A single calendar deadline and lifecycle/input events advance this state; there is no continuous reward clock.
+2. If the computer remains awake with displays on, ended days stay pending. The next display sleep, system sleep or shutdown provides a settlement boundary. Turning off only one of several displays does not qualify when public display-power metadata reports another awake display.
+3. If the screen is already asleep at the day boundary and the app runs, ended days settle then. If the Mac sleeps through midnight, processing catches up on wake; the app does not wake the computer to run a settlement animation.
+4. Ordinary awake relaunch is not evidence of rest. A later observed sleep/display event, or boot metadata proving a shutdown after the ended day, permits catch-up. Quitting the app alone does not claim a rest boundary.
+5. Ended days settle oldest first, once. A day's score and awarded XP become an immutable receipt with before/after balances and exact levels. Any newly verified improvement award is included once, on the latest eligible ended day in that settlement batch.
+6. Input/activity deltas, daily checkpoint, receipts and permanent claims commit in one SQLite transaction. Only committed unseen receipts are eligible for animation. A save failure retains the immutable retry payload; opening a window never mints XP.
+7. On the next menu or app opening, unseen receipts display in date order, one at a time. Skip-one/skip-all change only presentation acknowledgement. Closing before acknowledgement leaves the receipt unseen for next time. Replaying or skipping cannot award or revoke XP.
 
-For fragment `r`, use its complete rate bins (operation counts or `12 × counts`, which have the same CV):
+The settlement panel contains date, score, ordinary/improvement XP where applicable, and before/after level information. There is no settlement-review navigation entry or manual claim button. Effects are finite and cancelled when the panel closes. Visual tiers begin at levels 1, 20 and 60. Reduce Motion displays static feedback rather than requiring animated completion.
 
-```text
-CVr = populationStandardDeviation(rate bins) / mean(rate bins)
-```
-
-A usable fragment needs **ten accepted intervals and two complete bins**, positive sampled mean, and valid moments. Its weight `nr` is the accepted interval count represented inside those complete bins, excluding the chain's first key and unsampled tail endpoints. Shorter fragments retain base points and usable speed evidence but do not become perfect-consistency evidence.
-
-Combine within-fragment variation:
-
-```text
-CVcontext = sqrt(Σ(nr × CVr²) / Σnr)
-C = 1 − tanh(CVcontext + CVcontext³/3 + CVcontext⁵/5)
-consistencyPercent = 100 × C
-```
-
-This normalizes each fragment before combining it. Two internally steady runs at different mean speeds can both have `CVr = 0`; their different means alone do not lower bonus consistency. Aggregate moment variance tolerates negligible floating-point roundoff; invalid/nonfinite/corrupt moments cannot become perfect consistency.
-
-Let `Nc = Σnr` and `tc` be the total complete-bin seconds of qualified fragments. The bonus requires **at least ten complete bins, `Nc >= 20` and `tc >= 2 seconds`**:
-
-```text
-qC = q(Nc,k)
-consistencyBonus = 0.15 × blockBase × qC × C
-```
-
-`Nc`, `tc` and `qC` are independent from speed coverage. Missing evidence means unavailable, not poor consistency or a zero baseline.
-
-The separate Activity consistency indicator uses population CV from pooled complete per-second rate moments and displays its sample/interval coverage. It requires ten complete bins and twenty represented accepted intervals. It is not the same aggregation as the run-normalized reward bonus, so the two can differ. Neither uses `100/(1+rawIntervalCV)` as the new reward method. Legacy `practice-v1` retains its original information under an explicit label.
-
-## Settlement, attribution and numerical fixture
-
-Base points are already earned before a block settles. Settlement adds **only** the speed and consistency bonuses, once:
-
-```text
-complete award = blockBase + speedBonus + consistencyBonus
-```
-
-Total bonuses cannot exceed 40% of base. Speed is bounded at its 160-WPM reference, while additional accepted activity continues earning base points and independent XP. Pending bonus estimates are not put into totals and later removed.
-
-Hour/session point totals sum their actual attributed contributions. A block's finalized bonuses are allocated in proportion to the base-point contribution already attributed to each hour/session. Optional per-app collection is not required for scoring.
-
-Reward attribution uses the persisted progression timezone. Activity history can use a different timezone. When those historical hour boundaries are incompatible, the hour's reward value is unavailable rather than inventing a redistribution; the reward-day label identifies the fixed timezone used by daily points and XP.
-
-Fresh reward day, one uninterrupted 100-key block, 99 intervals of exactly 0.2 seconds:
-
-| Quantity | Value |
-|---|---:|
-| Actual seconds / speed intervals | 19.8 / 99 |
-| WPM | 60 |
-| Base points | 0.727768376954296 |
-| Complete one-second bins | 19 |
-| Represented consistency intervals `Nc` | 94 |
-| `qW` / `qC` | 0.99 / 0.94 |
-| Normalized consistency `C` | 1 |
-| Speed bonus | 0.09896214824017868 |
-| Consistency bonus | 0.10261534115055572 |
-| Final score | **0.9293458663450304** |
-
-The final 0.8-second tail adds measured speed/base time but no complete consistency sample. Reusing all 99 intervals for `qC` would incorrectly overstate consistency coverage. The earlier raw-interval proposal's 0.934804129172188 fixture does not describe the implemented one-second-sample method.
-
-## Delayed evidence and restart rules
-
-The existing adaptive model can accept up to three earlier intervals after recognizing a slower stable rhythm. Reward reconciliation keeps four transient endpoint-to-block assignments, not an event log. Blocks with unresolved endpoint evidence remain unsettled. Live periodic checkpoints preserve continuity and do not change canonical blocks or clear partial live rate bins.
-
-Candidate resolution is distinct from waiting time. When the measurement engine reaches its maximum continuity bound without another accepted event, it resolves/discards the pending candidate rather than leaving a block unresolved indefinitely. The coordinator forwards that completed idle-resolution boundary to rewards, closes the measured fragment and permits an otherwise complete block to settle without requiring another key. A still-incomplete 100-key block remains saved. Resolution never accepts a rejected interval, adds the waiting period to time, or creates future zero-rate samples.
-
-On relaunch, saved block keys, base points, aggregate moments and settled quality survive; timing continuity and unfinished rate bins end. This prevents inventing a predecessor interval across a restart. A relaunch after midnight settles saved prior-day partial blocks once before verifying completed-day improvement.
-
-Genuine late evidence after its block/day has already finalized cannot rewrite an old bonus. It adds an explicit `late-adjustment` base contribution under the still-open applicable daily budget, or the current reward day when the old day is closed. Its accepted time still advances lifetime XP counters. An integer XP threshold is attributed to the day it is earned, including a separate current-day XP award when late time belongs to an older open day. Finalized bonuses and claimed milestones do not get reissued.
-
-## Independent XP
-
-Lifetime counters begin at progression coverage start:
-
-```text
-timeXP = floor(lifetimeAcceptedSeconds / 300)
-volumeXP = floor(lifetimeAcceptedKeys / 2000)
-totalXP = timeXP + volumeXP + awardedImprovementXP
-```
-
-Only newly crossed thresholds are awarded. One delta can cross several. Seconds and key remainders persist across days, sessions, restarts and updates; three minutes today plus two tomorrow earns one time XP, and 1,500 keys today plus 500 tomorrow earns one volume XP. Daily/weekly XP sums integer awards attributed when earned, rather than summing floors of daily counters.
-
-| Actual practice | XP, before improvement |
-|---|---:|
-| 30 minutes + 5,000 keys | 6 + 2 = 8 |
-| 60 minutes + 10,000 keys | 12 + 5 = 17 |
-| 60 minutes + 20,000 keys | 12 + 10 = 22 |
-| 120 minutes + 20,000 keys | 24 + 10 = 34 |
-
-The 17-XP example plus a newly verified +10% speed gain earns 27 XP. There is no score conversion, logarithmic XP curve, absolute-WPM bonus, current-consistency multiplier, daily XP cap, achievement XP or punitive streak. Faster input can earn more volume XP only by producing more accepted keys. All XP is integral; partial seconds/keys remain progress, not fractional XP.
+A day without recorded input does not create a fake score or an empty animation. A settled day's genuinely late evidence cannot rewrite its finalized score. It remains in ordinary measurement history according to existing rules; the daily ledger conservatively excludes it from the already committed day rather than awarding twice. Startup ends continuity and partial live rate bins; it does not invent intervals across a restart.
 
 ## Verified personal improvement
 
-Tracks are normalized by declared input language and input-method/source identifier, with separate measurement/evidence policy. They do not use app identities. Chinese IME operation estimates and English input do not become interchangeable improvement samples. Unknown source metadata cannot create a baseline. State is bounded to 64 context lineages.
+The existing `improvement-v1` evaluator and its permanent claim high-water marks are retained. Context tracks use normalized declared language/input-method metadata and compatible measurement/evidence policies, not app identities. Chinese operation estimates and English input do not become interchangeable baseline samples. Unknown source metadata cannot establish a baseline. State is bounded to 64 context lineages.
 
-Each metric calibrates independently:
+Speed and consistency calibrate independently:
 
 - A qualifying completed context day contains at least **300 measured seconds**.
-- A baseline requires **five qualifying completed days and 3,600 measured seconds** for that metric.
-- Speed pools accepted interval weights and actual seconds: `12 × ΣNw / Σtw`, not averaged displayed WPM.
-- Consistency pools qualified within-fragment normalized rate variation and uses the same Kogasa mapping. Its minute gates use **qualified consistency seconds**. Unknown consistency is absent, not zero; speed can be ready while consistency still calibrates.
-- The metric's baseline freezes, with its calibration-through day. Those days never reappear as post-baseline verification evidence.
+- Each metric needs **five qualifying completed days and 3,600 metric-covered seconds** before its baseline freezes.
+- Speed pools accepted interval weights and seconds, rather than averaging displayed daily speeds.
+- Improvement consistency pools qualified within-fragment normalized variation with the Kogasa mapping. Its duration gates use covered consistency seconds. Missing consistency is absent, not a zero baseline.
+- Calibration-through days cannot also count as later verification evidence.
 
-Verification uses the **latest seven qualifying completed days after that metric's baseline**. It needs three valid daily estimates, at least **1,800 metric-covered seconds**, a pooled estimate at the milestone, and at least three independent daily estimates at that same milestone. Unknown-consistency days can age older evidence out of the seven-day window without inventing a value. Short spikes or the unfinished current day cannot immediately mint permanent improvement XP.
-
-Speed milestones are additive steps against the original baseline:
+Verification uses the **latest seven qualifying completed days after that metric's baseline**. It requires three valid daily estimates and at least **1,800 metric-covered seconds**. Both the pooled estimate and at least three independent daily estimates must meet the milestone. Unknown-consistency days can age older evidence out of the window without fabricating a value. The unfinished current day and brief bursts cannot immediately mint improvement XP.
 
 ```text
-threshold(m) = baselineWPM × (1 + 0.05 × m), m = 1,2,3,...
+speed milestone m = baseline WPM × (1 + 0.05 × m)
+consistency milestone m = baseline consistency + 5 × m, at most 100
 ```
 
-Consistency milestones increase the original 0–100 baseline by `5 × m` points, with no threshold above 100. Each newly verified speed or consistency milestone earns **5 XP**. A verified 40→44 or 100→110 WPM improvement crosses two steps and earns 10 XP; 70→80 consistency also earns 10 XP. Staying fast without improving earns ordinary practice XP, not improvement XP.
+Each newly verified milestone earns **750 XP** in new units: the previous 5-XP award scaled by 150. A verified 40→44 or 100→110 WPM gain crosses two steps and earns 1,500 XP. A 70→80 consistency gain likewise earns 1,500 XP. Persistent per-metric high-water marks prevent repeat awards after retry, restart or regression/recovery. Incompatible policy changes preserve lineage and conservatively suspend that lineage rather than granting a fresh baseline reset. Deleting all user data remains the separate privacy reset.
 
-Persistent per-metric high-water marks identify already rewarded steps. Multi-step jumps produce one stable claim range and award every new step. Repeated evaluation, retry, relaunch, regression/recovery and history pruning do not award those steps again. Policy changes preserve the lineage and high-water marks; this version conservatively suspends that lineage's improvement awards instead of silently recalibrating it for fresh XP. There is no baseline-reset button that preserves rewards. Explicit deletion of all user data is the separate privacy reset.
+These gates are transparent heuristics, not statistical proof of improved skill.
 
-These evidence defaults are transparent heuristics, not statistical proof of improved skill.
+## Exact levels and migration
 
-## Exact levels
+An existing balance `X` converts once to `150 × X`; every level threshold and next-level cost is multiplied by the same factor. This preserves level and proportional progress. For example, old **520 XP** becomes **78,000 XP**, still Level 20, at **3,000/7,500** toward Level 21 with **4,500** remaining. Historical XP is not also re-awarded as daily score.
 
-Everyone starts at Level 1, at zero XP. Cost depends on the **current** level:
-
-| Current level | Cost to next level |
+| Current level | XP to the next level |
 |---|---:|
-| 1–3 | 10 XP |
-| 4 | 20 XP |
-| 5–19 | 30 XP |
-| 20–29 | 50 XP |
-| 30–49 | 100 XP |
-| 50 onward | 200 XP |
+| 1–3 | 1,500 |
+| 4 | 3,000 |
+| 5–19 | 4,500 |
+| 20–29 | 7,500 |
+| 30–49 | 15,000 |
+| 50 onward | 30,000 |
 
-| Target level | Exact lifetime XP threshold |
+| Target level | Exact lifetime XP |
 |---|---:|
 | 1 | 0 |
-| 2 | 10 |
-| 3 | 20 |
-| 4 | 30 |
-| 5 | 50 |
-| 10 | 200 |
-| 20 | 500 |
-| 30 | 1,000 |
-| 40 | 2,000 |
-| 50 | 3,000 |
-| 60 | 5,000 |
+| 2 | 1,500 |
+| 5 | 7,500 |
+| 10 | 30,000 |
+| 20 | 75,000 |
+| 30 | 150,000 |
+| 40 | 300,000 |
+| 50 | 450,000 |
+| 60 | 750,000 |
 
-At 520 XP: Level 20, 20/50 XP toward Level 21, 30 XP remaining. Piecewise lookup is constant time and uses checked integer arithmetic; there is no fixed maximum level. If the next cumulative threshold exceeds the integer representation, it is unavailable rather than wrapped. Display abbreviations such as `1k` represent exact multiples of 1,000, not rounded requirements or rounded-up balances. One award can cross several levels; feedback groups the change and adds no extra XP.
+Balances and costs are whole integers. The piecewise level lookup is constant time; checked arithmetic rejects overflow. There is no fixed maximum level. A next threshold outside the integer representation is unavailable rather than wrapped. One settlement may cross several levels; level-up feedback adds no additional XP.
+
+Scaling is not a universal claim that every user now levels faster or slower: ordinary XP changed from time/key thresholds to a score influenced by speed and consistency. For the 41-minute/16,001-key example, the old time/key formula gave 16 XP; the new 2,072 XP is about 13.81 old units under 150× costs. Different practice patterns yield different progress.
 
 ## Persistence, retention and privacy
 
-The SQLite schema adds a checkpoint, daily earned aggregates, award ledger, attributions, permanent claim identities and batch receipts. One transaction commits ordinary measurement/activity deltas with reward state and awards. Stable batch fingerprints make identical retries idempotent; a reused ID with different content is rejected. Checkpoint revisions must advance consecutively. Source XP and score-component deltas must reconcile with new ledger awards; attributed amounts reconcile with their award. Baselines, high-water marks and earned totals cannot move backward. Finite/nonnegative checks and checked integer operations reject corrupt state rather than awarding extra rewards.
+SQLite schema 6 adds the daily checkpoint, immutable receipt rows and permanent daily claim identities. Checkpoint revisions must advance consecutively. Receipt score, ordinary XP, improvement XP, exact levels and balances reconcile before a transaction commits. Batch identities are idempotent; reusing an identity with different contents is rejected. Corrupt/nonfinite evidence and arithmetic overflow stop new rewards with a visible error while preserving ordinary input statistics.
 
-The coordinator completes all measurement, activity and reward contributions from **one canonical accepted event before initiating a capacity-triggered flush**. Deferring that flush prevents a batch from checkpointing one side of an event while leaving its other deltas behind. An in-flight failure retains the identical immutable write payload for retry; subsequent unsaved contributions wait behind it instead of being folded into the retried identity.
+Acknowledgement timestamps live separately from immutable receipt payloads. Already-seen detailed receipts follow the five-year retention horizon. Unseen receipts remain queued; permanent claims, migrated/lifetime XP and the state checkpoint survive detail pruning. Open pending days and queued receipts have explicit capacity bounds rather than unbounded per-key storage. Capacity exhaustion stops further reward changes with an error; it does not silently discard unpaid activity. Clearing optional per-app detail does not affect rewards. Delete all data removes every daily/legacy reward table, baseline and acknowledgement.
 
-Normal saves coalesce on the existing roughly 30-second schedule, off the keyboard callback. There is no per-key database row/fsync, extra keyboard monitor, lifetime-history poll or permanent high-frequency reward timer. Uncommitted in-memory input can be lost on crash/force quit; the scheduling interval is **not a hard maximum** when writes are delayed or failing. A successfully committed batch survives retries; the app does not claim to recover input never saved.
+The coordinator completes all contributions from a canonical accepted event before capacity-triggered persistence. Normal saves coalesce around the existing thirty-second schedule off the keyboard callback. There is no per-key row/fsync, additional keyboard monitor, persistent sequence log or permanent high-frequency reward timer. Uncommitted input can be lost after crash or force quit; delayed or failed writes can leave more than thirty seconds unsaved. The app cannot recover activity it never saved.
 
-Detailed reward ledger/attribution history follows the five-year horizon, with a 200,000-award bound. Lifetime checkpoint totals, daily earned totals, claim identities and retry receipts are independent of that pruning. Clearing optional per-app detail does not affect progression. Delete all data removes every progression table and baseline.
+The daily-rewards CSV exports committed receipts with day, timezone, policy, score, ordinary/improvement XP, balances, levels, aggregate evidence, settlement time and coverage. Pending daily values remain in the live checkpoint. The old rewards export remains clearly legacy. Raw input/activity exports retain their existing formats; adding rows of different record types together would duplicate the same activity.
 
-The separate rewards CSV includes lifetime/daily/award/attribution record types, score components, XP sources, versions, coverage start, progression timezone and checkpoint revision. Additive record types must not be summed together as duplicate earnings. Existing input/activity CSV formats remain available separately.
+Only counts, durations, sufficient moments, necessary input-source identifiers and reward/checkpoint metadata are stored. There is no typed text, clipboard, window title, URL, physical-key sequence, interval sequence or per-second sequence. Optional per-app data is local and off by default.
 
-Only necessary counts, durations, moments, language/input-source context identifiers and award/checkpoint metadata are stored. There is no text, clipboard, title, URL, physical-key sequence, interval sequence or per-second sequence. Metadata filters cannot prove usefulness or detect every macro. Valid code, repeated punctuation and repeated words are not rejected for their spelling.
+## Historical policies
+
+0.4.0's `practice-v1` combined four capped components into a 0–100 index. 0.4.1's `score-v2` accumulated daily logarithmic time/volume points and settled up to 25% speed plus 15% consistency bonuses in canonical 100-key blocks. Its independent `xp-v1` awarded one XP per 300 measured seconds, one per 2,000 accepted keys and five per verified improvement milestone, with persistent lifetime remainders. These records and claims remain intact and explicitly legacy. They are not relabeled as new daily scores, summed into a new chart, or converted into ordinary XP a second time.
+
+The legacy evaluator continues producing compatible improvement evidence and claims. Only newly observed improvement deltas are scaled into the daily engine; its ongoing legacy ordinary time/key counters do not become a second new XP source.
 
 ## Implementation and verification
 
-- [TypingRewards.swift](../Sources/TypingCore/TypingRewards.swift): base points, canonical blocks, measured evidence, settlement, attribution and checkpoint state.
-- [RewardProgression.swift](../Sources/TypingCore/RewardProgression.swift): independent XP, exact levels, compatible-context calibration and milestone verification.
-- [RateConsistency.swift](../Sources/TypingCore/RateConsistency.swift): complete one-second sampling and standalone consistency moments.
-- [AggregateStore.swift](../Sources/TypingStore/AggregateStore.swift): transactional writes, migration, durable identities, retention, deletion and rewards export.
-- [RewardViews.swift](../Sources/Keytempo/RewardViews.swift): native score, XP, levels, coverage and formula explanations.
+- [DailyRewards.swift](../Sources/TypingCore/DailyRewards.swift): daily formula, level scaling, coverage, day closure and immutable settlement generation.
+- [RateConsistency.swift](../Sources/TypingCore/RateConsistency.swift): complete one-second sampling and pooled standalone moments.
+- [RewardProgression.swift](../Sources/TypingCore/RewardProgression.swift) and [TypingRewards.swift](../Sources/TypingCore/TypingRewards.swift): retained compatible improvement evidence and legacy ledger.
+- [AggregateStore.swift](../Sources/TypingStore/AggregateStore.swift): transactional checkpoints, immutable receipts, claims, acknowledgements, retention and exports.
+- [AppModel.swift](../Sources/Keytempo/AppModel.swift) and [SystemRestState.swift](../Sources/Keytempo/SystemRestState.swift): public display-power/lifecycle metadata, midnight deadline and committed FIFO presentation.
+- [RewardViews.swift](../Sources/Keytempo/RewardViews.swift) and [SettlementViews.swift](../Sources/Keytempo/SettlementViews.swift): daily score/XP, lifetime progress and finite presentation effects.
 
-Deterministic tests cover numerical fixtures, partitioning, evidence gates, exact levels, overflow/corruption and independent improvement. Store/integration checks use isolated synthetic data. Current executed validation and unverified runtime/performance limits are recorded in [VALIDATION.md](VALIDATION.md) and [PERFORMANCE.md](../PERFORMANCE.md); this policy document does not claim every native, power or update path has been verified.
+Deterministic tests cover formula examples, missing evidence, partitioned/restarted streams, deferred settlement, migration, exact levels, corruption/overflow and receipt idempotence. Store/integration checks use isolated synthetic metadata. Executed test results and remaining native lifecycle/power/update limitations belong in [VALIDATION.md](VALIDATION.md) and [PERFORMANCE.md](../PERFORMANCE.md); this policy document does not claim that every physical-input, overnight sleep or update path has been exercised.

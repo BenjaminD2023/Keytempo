@@ -3,6 +3,7 @@ set -euo pipefail
 cd "${0:A:h:h}"
 python3 scripts/test-update-feed.py
 python3 scripts/test-release-notes.py
+python3 scripts/test-package-source.py
 # CLT 27's SwiftBuild drops TestingMacros for per-file test compilation.
 # The native engine correctly loads the bundled Swift Testing plugin.
 developer_path="$(xcode-select -p)"

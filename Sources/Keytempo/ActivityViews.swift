@@ -110,8 +110,9 @@ struct ActivityView: View {
                 if model.activityLoading && model.activityHourly.isEmpty {
                     ProgressView(L("正在加载活动…")).frame(maxWidth: .infinity, minHeight: 180)
                 } else if model.activityError == nil {
-                    summary
                     RewardDashboard(model: model)
+                    summary
+                    RewardDetails(model: model)
                     hourlyTimeline
                     sessions
                     appBreakdown
@@ -155,29 +156,26 @@ struct ActivityView: View {
     }
 
     private var summary: some View {
-        GroupBox {
-            HStack(alignment: .top, spacing: 28) {
-                VStack(alignment: .leading, spacing: 7) {
-                    Label(L("练习积分"), systemImage: "chart.line.uptrend.xyaxis").font(.headline)
-                    HStack(alignment: .firstTextBaseline, spacing: 5) {
-                        Text(rewardPointText(model.selectedRewardDay?.components.total)).font(.system(size: 38, weight: .semibold)).monospacedDigit()
-                    }
-                    Text(model.selectedRewardDay == nil ? L("旧版／未覆盖") : L("只累加已获得的积分"))
-                        .font(.caption).foregroundStyle(.secondary)
-                }.frame(minWidth: 160, alignment: .leading)
-                Grid(alignment: .leading, horizontalSpacing: 30, verticalSpacing: 17) {
-                    GridRow {
-                        ActivityMetric(label: L("平均速度（估算 WPM）"), value: rateTotals.wpm.map { "≈\(activityValue($0)) WPM" } ?? "— WPM")
-                        ActivityMetric(label: L("每秒节奏稳定度"), value: activityValue(rateTotals.consistency) + " / 100",
-                                       detail: L("%@ 个完整一秒样本 · %@ 个已接受间隔", rateTotals.rateConsistency.count.formatted(), rateTotals.rateConsistency.intervals.formatted()))
-                    }
-                    GridRow {
-                        ActivityMetric(label: L("实际打字时长"), value: activityDuration(totals.seconds))
-                        ActivityMetric(label: L("敲键数量"), value: compactKeystrokeCount(totals.keys))
-                    }
-                }.frame(maxWidth: .infinity, alignment: .leading)
-            }.padding(12)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 18) {
+                ActivityMetric(label: L("平均速度（估算 WPM）"), value: rateTotals.wpm.map { "≈\(activityValue($0)) WPM" } ?? "— WPM")
+                Divider().frame(height: 50)
+                ActivityMetric(label: L("每秒节奏稳定度"), value: activityValue(rateTotals.consistency) + " / 100",
+                               detail: L("%@ 秒样本", rateTotals.rateConsistency.count.formatted()))
+                    .help(L("%@ 个完整一秒样本 · %@ 个已接受间隔", rateTotals.rateConsistency.count.formatted(), rateTotals.rateConsistency.intervals.formatted()))
+                Divider().frame(height: 50)
+                ActivityMetric(label: L("实际打字时长"), value: activityDuration(totals.seconds))
+                Divider().frame(height: 50)
+                ActivityMetric(label: L("敲键数量"), value: compactKeystrokeCount(totals.keys))
+                    .help(totals.keys.formatted())
+            }
+            if partialRates {
+                Text(L("速度与稳定度使用当前计数方式；敲键数量与时长包含全部记录。"))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
+        .padding(18)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.65), in: RoundedRectangle(cornerRadius: 12))
     }
 
     private var hourlyTimeline: some View {
@@ -199,7 +197,7 @@ struct ActivityView: View {
                 ScrollView(.horizontal) {
                     Grid(alignment: .leading, horizontalSpacing: 28, verticalSpacing: 10) {
                         GridRow {
-                            Text(L("小时")); Text(L("敲键数量")); Text(L("实际打字时长")); Text(L("平均速度（估算 WPM）")); Text(L("练习积分"))
+                            Text(L("小时")); Text(L("敲键数量")); Text(L("实际打字时长")); Text(L("平均速度（估算 WPM）"))
                         }.font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                         ForEach(hours) { hour in
                             GridRow {
@@ -207,14 +205,11 @@ struct ActivityView: View {
                                 Text(compactKeystrokeCount(hour.totals.keys))
                                 Text(activityDuration(hour.totals.seconds))
                                 Text(activityValue(hour.compatible ? hour.totals.wpm : nil))
-                                Text(rewardPointText(model.rewardPoints(hour: hour.start)))
                             }.font(.callout).monospacedDigit()
                         }
                     }.padding(.vertical, 4)
                 }
                 Text(L("空白小时表示没有记录。跨小时的已接受间隔按实际覆盖比例分配，速度按间隔总数与总时长加权；混合计数方式的小时不显示速度。"))
-                    .font(.caption).foregroundStyle(.secondary)
-                Text(L("积分使用固定奖励时区的已发贡献；与历史小时边界不一致时显示 —，不伪造重新分配。"))
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -226,12 +221,12 @@ struct ActivityView: View {
             Text(L("连续五分钟没有接受到输入，或暂停、睡眠、退出、跨日等边界，会结束一个会话。会话经过时间与实际打字时长分别展示。"))
                 .font(.caption).foregroundStyle(.secondary)
             if model.activitySessions.isEmpty {
-                ActivityEmptyState(title: L("这一天还没有输入会话"), detail: L("单次敲键保留数量和基础积分；速度需要更多间隔。"))
+                ActivityEmptyState(title: L("这一天还没有输入会话"), detail: L("单次敲键保留数量；速度与每日分数需要更多样本。"))
             } else {
                 ScrollView(.horizontal) {
                     Grid(alignment: .leading, horizontalSpacing: 22, verticalSpacing: 11) {
                         GridRow {
-                            Text(L("开始 — 最后输入")); Text(L("经过时间")); Text(L("实际打字时长")); Text(L("敲键数量")); Text("WPM"); Text(L("每秒稳定度")); Text(L("练习积分"))
+                            Text(L("开始 — 最后输入")); Text(L("经过时间")); Text(L("实际打字时长")); Text(L("敲键数量")); Text("WPM"); Text(L("每秒稳定度"))
                         }.font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                         ForEach(Array(model.activitySessions.sorted { $0.start > $1.start }.prefix(200))) { session in
                             GridRow {
@@ -246,7 +241,6 @@ struct ActivityView: View {
                                         .font(.caption).foregroundStyle(.secondary)
                                 }
                                 .help(L("%@ 个完整一秒样本 · %@ 个已接受间隔", session.totals.rateConsistency.count.formatted(), session.totals.rateConsistency.intervals.formatted()))
-                                Text(rewardPointText(model.rewardPoints(sessionID: session.id)))
                             }.font(.callout).monospacedDigit()
                         }
                     }.padding(.vertical, 4)
@@ -328,7 +322,8 @@ private struct ActivityMetric: View {
     var detail: String? = nil
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text(label).font(.caption).foregroundStyle(.secondary)
+            Text(label).font(.caption).foregroundStyle(.secondary).lineLimit(2, reservesSpace: true)
+                .fixedSize(horizontal: false, vertical: true)
             Text(value).font(.title3.weight(.medium)).monospacedDigit().lineLimit(1).minimumScaleFactor(0.75)
             if let detail { Text(detail).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
         }.frame(maxWidth: .infinity, alignment: .leading)

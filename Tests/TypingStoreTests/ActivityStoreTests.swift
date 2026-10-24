@@ -61,7 +61,7 @@ final class ActivityStoreTests {
         #expect(try db.queryHourly(since: hour, until: hour.addingTimeInterval(3600)).isEmpty)
         #expect(try db.querySessions(since: hour, until: hour.addingTimeInterval(3600)).isEmpty)
         #expect(try db.activityCoverageStart() == nil)
-        #expect(try scalar("PRAGMA user_version", at: url) == "5")
+        #expect(try scalar("PRAGMA user_version", at: url) == "6")
         #expect(try scalar("SELECT value FROM unrelated", at: url) == "preserved")
     }
 
@@ -180,9 +180,9 @@ final class ActivityStoreTests {
             // Build a valid fixture first, then simulate an older/newer declaration.
             do { _ = try AggregateStore(url: url, now: hour, timeZone: utc) }
             if newer {
-                try execute("PRAGMA user_version=6", at: url)
+                try execute("PRAGMA user_version=7", at: url)
                 #expect(throws: (any Error).self) { try AggregateStore(url: url, now: self.hour, timeZone: self.utc) }
-                #expect(try scalar("PRAGMA user_version", at: url) == "6")
+                #expect(try scalar("PRAGMA user_version", at: url) == "7")
             } else {
                 try execute("PRAGMA user_version=2", at: url)
                 #expect(throws: (any Error).self) { try AggregateStore(url: url, now: self.hour, timeZone: self.utc) }

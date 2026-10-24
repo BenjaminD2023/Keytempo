@@ -36,6 +36,63 @@ class UpdateFeedTests(unittest.TestCase):
         self.assertEqual(item.find("enclosure").get("url"), "https://github.com/BenjaminD2023/Keytempo/releases/download/v1.1.2/Keytempo-1.1.2-macos-arm64.zip")
         self.assertEqual(item.find("enclosure").get("length"), "1000")
 
+    def test_beta_versions_have_a_separate_channel_and_safe_asset_path(self):
+        for version in ["0.5.0-beta", "0.5.0-beta.0", "0.5.0-beta.12"]:
+            with self.subTest(version=version):
+                root = ET.fromstring(self.generate(version=version, build="19"))
+                item = root.find("channel/item")
+                self.assertEqual(item.findtext(feed.tag(feed.SPARKLE, "channel")), "beta")
+                self.assertEqual(item.findtext(feed.tag(feed.SPARKLE, "shortVersionString")), version)
+                self.assertIn(f"/v{version}/Keytempo-{version}-", item.find("enclosure").get("url"))
+        stable = ET.fromstring(self.generate(version="0.5.0", build="19")).find("channel/item")
+        self.assertIsNone(stable.find(feed.tag(feed.SPARKLE, "channel")))
+
+    def test_unapproved_prerelease_suffixes_and_unsafe_versions_are_rejected(self):
+        versions = ["0.5.0-beta.01", "0.5.0-beta.", "0.5.0-beta.1.2", "0.5.0-alpha",
+                    "0.5.0-rc.1", "0.5.0-beta+build", "0.5.0-beta/../../secret", "0.5.0-beta\\payload",
+                    "0.5.0-beta\n", "00.5.0-beta", "1" * 129 + ".0.0"]
+        for version in versions:
+            with self.subTest(version=version), self.assertRaises(ValueError):
+                self.generate(version=version)
+
+    def test_beta_channel_metadata_cannot_be_missing_changed_or_duplicated(self):
+        original = self.generate(version="0.5.0-beta", build="19")
+        for mode in ["missing", "stable", "duplicated", "wrong"]:
+            with self.subTest(mode=mode):
+                root = ET.fromstring(original)
+                item = root.find("channel/item")
+                channel = item.find(feed.tag(feed.SPARKLE, "channel"))
+                if mode == "missing":
+                    item.remove(channel)
+                elif mode == "stable":
+                    item.find(feed.tag(feed.SPARKLE, "shortVersionString")).text = "0.5.0"
+                elif mode == "duplicated":
+                    ET.SubElement(item, feed.tag(feed.SPARKLE, "channel")).text = "beta"
+                else:
+                    channel.text = "nightly"
+                self.previous.write_bytes(ET.tostring(root))
+                with self.assertRaises(ValueError):
+                    self.generate(version="0.5.1-beta", build="20")
+
+    def test_beta_addition_preserves_historical_item_bytes_exactly(self):
+        data = self.generate(version="0.4.1", build="17")
+        data = data.replace(b"<description>", b"<description><![CDATA[keystrokes & XP ")
+        data = data.replace(b"</description>", b"]]></description>")
+        data = data.replace(b" />", b"></enclosure>")
+        self.previous.write_bytes(data)
+        historical = feed.raw_release_items(data)
+        beta = self.generate(version="0.5.0-beta", build="19")
+        self.assertEqual(feed.raw_release_items(beta)[1:], historical)
+        # An old item's comment cannot be mistaken for a new placeholder.
+        beta = beta.replace(b"<title>Keytempo 0.5.0-beta</title>", b"<title>Keytempo 0.5.0-beta</title><!--keytempo-preserve-release-1-->")
+        self.previous.write_bytes(beta)
+        feed.load_feed(self.previous)
+        stable = self.generate(version="0.5.0", build="20")
+        self.assertEqual(feed.raw_release_items(stable)[1:], feed.raw_release_items(beta))
+        items = ET.fromstring(stable).findall("channel/item")
+        self.assertIsNone(items[0].find(feed.tag(feed.SPARKLE, "channel")))
+        self.assertEqual(items[1].findtext(feed.tag(feed.SPARKLE, "channel")), "beta")
+
     def test_same_or_older_build_and_duplicate_version_are_rejected(self):
         self.previous.write_bytes(self.generate())
         for changes in [dict(version="1.1.3", build="9"), dict(version="1.1.3", build="8"), dict(build="10")]:

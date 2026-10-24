@@ -56,7 +56,7 @@ public enum StoreError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case let .sqlite(message): return message
-        case let .unsupportedVersion(version): return "统计数据库版本 \(version) 高于此版本支持的版本 5，请使用较新版本的 Keytempo。"
+        case let .unsupportedVersion(version): return "统计数据库版本 \(version) 高于此版本支持的版本 6，请使用较新版本的 Keytempo。"
         case let .resultLimit(limit): return "查询超过 \(limit) 条记录，请缩小时间范围。"
         }
     }
@@ -133,6 +133,17 @@ public final class AggregateStore: @unchecked Sendable {
           volume_xp INTEGER NOT NULL CHECK(typeof(volume_xp)='integer' AND volume_xp>=0),
           improvement_xp INTEGER NOT NULL CHECK(typeof(improvement_xp)='integer' AND improvement_xp>=0));
         """
+    private static let createDailyRewards = """
+        CREATE TABLE IF NOT EXISTS daily_reward_checkpoint (
+          id INTEGER NOT NULL PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL CHECK(typeof(revision)='integer' AND revision>=1),
+          state_json TEXT NOT NULL CHECK(length(state_json)<=4194304),state_hash TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS daily_reward_receipts (
+          id TEXT NOT NULL PRIMARY KEY,day TEXT NOT NULL UNIQUE,settled_at REAL NOT NULL,
+          receipt_json TEXT NOT NULL CHECK(length(receipt_json)<=65536),receipt_hash TEXT NOT NULL,seen_at REAL);
+        CREATE INDEX IF NOT EXISTS daily_reward_receipts_pending ON daily_reward_receipts(seen_at,day,id);
+        CREATE TABLE IF NOT EXISTS daily_reward_claims (
+          id TEXT NOT NULL PRIMARY KEY,day TEXT NOT NULL UNIQUE,receipt_hash TEXT NOT NULL);
+        """
     public let url: URL
     public init(url: URL, now: Date = Date(), timeZone: TimeZone = .current) throws {
         self.url = url
@@ -145,7 +156,7 @@ public final class AggregateStore: @unchecked Sendable {
             sqlite3_busy_timeout(db, 1500)
             // Reject a newer database before changing its journal or schema settings.
             let version = try schemaVersion()
-            guard version <= 5 else { throw StoreError.unsupportedVersion(version) }
+            guard version <= 6 else { throw StoreError.unsupportedVersion(version) }
             try execute("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA secure_delete=ON;")
             try prepareSchema()
             try prune(now: now, timeZone: timeZone)
@@ -223,12 +234,25 @@ public final class AggregateStore: @unchecked Sendable {
             }
         }
     }
+    private func validateDailyRewardLayout() throws {
+        let expected: [(String, [String], [String])] = [
+            ("daily_reward_checkpoint", ["id", "revision", "state_json", "state_hash"], ["id"]),
+            ("daily_reward_receipts", ["id", "day", "settled_at", "receipt_json", "receipt_hash", "seen_at"], ["id"]),
+            ("daily_reward_claims", ["id", "day", "receipt_hash"], ["id"])
+        ]
+        for (table, columns, key) in expected {
+            let layout = try tableLayout(table)
+            guard layout.columns == columns, layout.primaryKey == key else {
+                throw StoreError.sqlite("每日结算数据库结构不匹配，已保留原有数据。")
+            }
+        }
+    }
     /// The table rebuild and version update commit together; failure leaves v1 intact.
     private func prepareSchema() throws {
         try execute("BEGIN IMMEDIATE")
         do {
             let version = try schemaVersion(), layout = try tableLayout("daily")
-            guard version <= 5 else { throw StoreError.unsupportedVersion(version) }
+            guard version <= 6 else { throw StoreError.unsupportedVersion(version) }
             let legacyKey = ["day", "timezone", "rule", "evidence"]
             if version == 0 && layout.columns.isEmpty {
                 try execute(Self.createDaily)
@@ -238,7 +262,7 @@ public final class AggregateStore: @unchecked Sendable {
                 let legacy = Self.legacyColumns.joined(separator: ",")
                 try execute("INSERT INTO daily (\(Self.columns.joined(separator: ","))) SELECT \(legacy),'und',0,0,0,0 FROM keytempo_daily_v1_migration")
                 try execute("DROP TABLE keytempo_daily_v1_migration")
-            } else if !(2...5).contains(version) || layout.columns != Self.columns || layout.primaryKey != legacyKey + ["language"] {
+            } else if !(2...6).contains(version) || layout.columns != Self.columns || layout.primaryKey != legacyKey + ["language"] {
                 throw StoreError.sqlite("统计数据库结构与版本 \(version) 不匹配，已保留原有数据。")
             }
             if version < 3 { try execute(Self.createActivity) }
@@ -249,14 +273,17 @@ public final class AggregateStore: @unchecked Sendable {
             try validateActivityLayout()
             if version < 5 { try execute(Self.createRewards) }
             try validateRewardLayout()
-            try execute("CREATE INDEX IF NOT EXISTS daily_range ON daily(day); PRAGMA user_version=5; COMMIT;")
+            if version < 6 { try execute(Self.createDailyRewards) }
+            try validateDailyRewardLayout()
+            try execute("CREATE INDEX IF NOT EXISTS daily_range ON daily(day); PRAGMA user_version=6; COMMIT;")
         } catch { try? execute("ROLLBACK"); throw error }
     }
-    public func save(_ rows: [StoredAggregate], activity: ActivityBatch = .init(), progression: RewardWrite? = nil, batchID: String? = nil) throws {
-        guard !rows.isEmpty || !activity.isEmpty || progression != nil || batchID != nil else { return }
-        guard progression == nil || batchID != nil else { throw StoreError.sqlite("奖励检查点缺少稳定批次标识。") }
+    public func save(_ rows: [StoredAggregate], activity: ActivityBatch = .init(), progression: RewardWrite? = nil,
+                     dailyRewards: DailyRewardWrite? = nil, batchID: String? = nil) throws {
+        guard !rows.isEmpty || !activity.isEmpty || progression != nil || dailyRewards != nil || batchID != nil else { return }
+        guard (progression == nil && dailyRewards == nil) || batchID != nil else { throw StoreError.sqlite("奖励检查点缺少稳定批次标识。") }
         if let batchID { try validateIdentifier(batchID) }
-        let fingerprint = try batchID.map { _ in try batchFingerprint(rows: rows, activity: activity, progression: progression) }
+        let fingerprint = try batchID.map { _ in try batchFingerprint(rows: rows, activity: activity, progression: progression, dailyRewards: dailyRewards) }
         lock.lock(); defer { lock.unlock() }
         try execute("BEGIN IMMEDIATE")
         do {
@@ -264,6 +291,7 @@ public final class AggregateStore: @unchecked Sendable {
                 try execute("COMMIT"); return
             }
             let rewardSave = try progression.map { try prepareRewardSave($0) }
+            let dailyRewardSave = try dailyRewards.map { try prepareDailyRewardSave($0) }
             let sql = """
             INSERT INTO daily (\(Self.columns.joined(separator: ","))) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(day,timezone,rule,evidence,language) DO UPDATE SET
@@ -291,7 +319,8 @@ public final class AggregateStore: @unchecked Sendable {
             }
             try saveActivity(activity)
             if let progression, let rewardSave, let batchID { try saveRewards(progression, prepared: rewardSave, batchID: batchID) }
-            if let batchID, let fingerprint { try saveBatchReceipt(batchID, fingerprint: fingerprint, revision: progression?.state.revision) }
+            if let dailyRewards, let dailyRewardSave { try saveDailyRewards(dailyRewards, prepared: dailyRewardSave) }
+            if let batchID, let fingerprint { try saveBatchReceipt(batchID, fingerprint: fingerprint, revision: progression?.state.revision ?? dailyRewards?.state.revision) }
             try execute("COMMIT")
         } catch { try? execute("ROLLBACK"); throw error }
     }
@@ -299,6 +328,7 @@ public final class AggregateStore: @unchecked Sendable {
         let rows: [StoredAggregate]
         let activity: ActivityBatch
         let progression: RewardWrite?
+        let dailyRewards: DailyRewardWrite?
     }
     private struct PreparedRewardSave {
         let stateJSON: String
@@ -313,9 +343,9 @@ public final class AggregateStore: @unchecked Sendable {
     private func digest(_ text: String) -> String {
         SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
     }
-    private func batchFingerprint(rows: [StoredAggregate], activity: ActivityBatch, progression: RewardWrite?) throws -> String {
+    private func batchFingerprint(rows: [StoredAggregate], activity: ActivityBatch, progression: RewardWrite?, dailyRewards: DailyRewardWrite?) throws -> String {
         let ordered = ActivityBatch(hourly: activity.hourly.sorted { $0.id < $1.id }, sessions: activity.sessions.sorted { $0.id < $1.id })
-        return digest(try encodedJSON(BatchPayload(rows: rows.sorted { $0.id < $1.id }, activity: ordered, progression: progression)))
+        return digest(try encodedJSON(BatchPayload(rows: rows.sorted { $0.id < $1.id }, activity: ordered, progression: progression, dailyRewards: dailyRewards)))
     }
     private func validateIdentifier(_ value: String, maximum: Int = 255) throws {
         guard !value.isEmpty, value.utf8.count <= maximum,
@@ -562,6 +592,258 @@ public final class AggregateStore: @unchecked Sendable {
     public func loadRewardState() throws -> RewardState? {
         lock.lock(); defer { lock.unlock() }
         return try readRewardState()
+    }
+
+    // The daily score is a provisional performance index, not an earned
+    // balance. Only immutable settlement receipts advance this checkpoint's
+    // XP. Presentation acknowledgements live in a separate column and never
+    // mutate either the checkpoint or its receipt payload.
+    private struct PreparedDailyRewardSave {
+        let stateJSON: String
+        let receipts: [(DailySettlementReceipt, String, String)]
+    }
+    private func readDailyRewardState() throws -> DailyRewardState? {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT revision,state_json,state_hash FROM daily_reward_checkpoint WHERE id=1", -1, &statement, nil) == SQLITE_OK,
+              let statement else { throw failure() }
+        defer { sqlite3_finalize(statement) }
+        let result = sqlite3_step(statement)
+        if result == SQLITE_DONE { return nil }
+        guard result == SQLITE_ROW else { throw failure() }
+        let json = String(cString: sqlite3_column_text(statement, 1))
+        guard json.utf8.count <= 4_194_304, digest(json) == String(cString: sqlite3_column_text(statement, 2)) else {
+            throw StoreError.sqlite("每日结算检查点校验失败，已保留原有数据。")
+        }
+        let state = try JSONDecoder().decode(DailyRewardState.self, from: Data(json.utf8))
+        guard state.isValid, state.revision == sqlite3_column_int64(statement, 0), state.revision >= 1 else {
+            throw StoreError.sqlite("每日结算检查点无效，已保留原有数据。")
+        }
+        return state
+    }
+    public func loadDailyRewardState() throws -> DailyRewardState? {
+        lock.lock(); defer { lock.unlock() }
+        return try readDailyRewardState()
+    }
+    private func dailyRewardClaim(id: String) throws -> (day: String, hash: String)? {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT day,receipt_hash FROM daily_reward_claims WHERE id=?", -1, &statement, nil) == SQLITE_OK,
+              let statement else { throw failure() }
+        defer { sqlite3_finalize(statement) }; bind(id, at: 1, statement: statement)
+        let result = sqlite3_step(statement)
+        if result == SQLITE_DONE { return nil }
+        guard result == SQLITE_ROW else { throw failure() }
+        return (String(cString: sqlite3_column_text(statement, 0)), String(cString: sqlite3_column_text(statement, 1)))
+    }
+    private func prepareDailyRewardSave(_ write: DailyRewardWrite) throws -> PreparedDailyRewardSave {
+        let state = write.state
+        guard state.isValid, state.revision >= 1, write.receipts.count <= 8192 else {
+            throw StoreError.sqlite("每日结算检查点无效，未保存本次事务。")
+        }
+        let previous = try readDailyRewardState()
+        let revision = (previous?.revision ?? 0).addingReportingOverflow(1)
+        guard !revision.overflow, state.revision == revision.partialValue else {
+            throw StoreError.sqlite("每日结算检查点版本不连续，未保存本次事务。")
+        }
+        if let previous {
+            guard state.coverageStart == previous.coverageStart, state.lineage == previous.lineage,
+                  state.progressionTimezone == previous.progressionTimezone,
+                  state.migratedLegacyXP == previous.migratedLegacyXP,
+                  state.currentDay >= previous.currentDay, state.totalXP >= previous.totalXP,
+                  state.observedLegacyImprovementXP >= previous.observedLegacyImprovementXP,
+                  previous.settledThroughDay == nil || (state.settledThroughDay != nil && state.settledThroughDay! >= previous.settledThroughDay!) else {
+                throw StoreError.sqlite("每日结算覆盖范围或已入账经验值不能回退，未保存本次事务。")
+            }
+            for (day, old) in previous.days {
+                guard let newer = state.days[day] else {
+                    guard state.settledThroughDay.map({ day <= $0 }) == true else {
+                        throw StoreError.sqlite("待结算的输入日期不能丢弃，未保存本次事务。")
+                    }
+                    continue
+                }
+                guard newer.totals.keys >= old.totals.keys, newer.totals.seconds >= old.totals.seconds,
+                      newer.totals.intervals >= old.totals.intervals,
+                      newer.totals.squaredIntervalSeconds >= old.totals.squaredIntervalSeconds,
+                      newer.totals.rateConsistency.count >= old.totals.rateConsistency.count,
+                      newer.totals.rateConsistency.intervals >= old.totals.rateConsistency.intervals,
+                      newer.totals.rateConsistency.sum >= old.totals.rateConsistency.sum,
+                      newer.totals.rateConsistency.squaredSum >= old.totals.rateConsistency.squaredSum,
+                      !old.sealed || newer.sealed, !old.mixedRules || newer.mixedRules else {
+                    throw StoreError.sqlite("每日输入证据不能回退或重新开启已结束日期，未保存本次事务。")
+                }
+            }
+        }
+        let stateJSON = try encodedJSON(state)
+        guard stateJSON.utf8.count <= 4_194_304 else { throw StoreError.sqlite("每日结算检查点超过容量。") }
+        var receipts: [(DailySettlementReceipt, String, String)] = []
+        var seen: [String: String] = [:], seenDays = Set<String>()
+        for receipt in write.receipts.sorted(by: { ($0.day, $0.id) < ($1.day, $1.id) }) {
+            try validateIdentifier(receipt.id); try validateRewardDay(receipt.day)
+            guard receipt.isValid, receipt.day < state.currentDay else {
+                throw StoreError.sqlite("每日结算凭据无效，未保存本次事务。")
+            }
+            let json = try encodedJSON(receipt), hash = digest(json)
+            guard json.utf8.count <= 65_536 else { throw StoreError.sqlite("每日结算凭据超过容量。") }
+            if let prior = seen[receipt.id] {
+                guard prior == hash else { throw StoreError.sqlite("每日结算标识已用于不同内容。") }
+                continue
+            }
+            seen[receipt.id] = hash
+            if let prior = try dailyRewardClaim(id: receipt.id) {
+                guard prior.day == receipt.day, prior.hash == hash else { throw StoreError.sqlite("每日结算标识已用于不同内容。") }
+                continue
+            }
+            guard seenDays.insert(receipt.day).inserted,
+                  previous?.settledThroughDay == nil || receipt.day > previous!.settledThroughDay!,
+                  state.settledThroughDay != nil && receipt.day <= state.settledThroughDay! else {
+                throw StoreError.sqlite("同一日期不能重复结算，未保存本次事务。")
+            }
+            receipts.append((receipt, json, hash))
+        }
+        var balance = previous?.totalXP ?? state.migratedLegacyXP
+        for (receipt, _, _) in receipts {
+            let award = receipt.ordinaryXP.addingReportingOverflow(receipt.improvementXP)
+            let after = balance.addingReportingOverflow(award.partialValue)
+            guard !award.overflow, !after.overflow, receipt.beforeXP == balance, receipt.afterXP == after.partialValue else {
+                throw StoreError.sqlite("结算凭据与累计经验值不一致，未保存本次事务。")
+            }
+            balance = after.partialValue
+        }
+        guard balance == state.totalXP else {
+            throw StoreError.sqlite("已入账经验值必须对应唯一的结算凭据，未保存本次事务。")
+        }
+        if let previous {
+            var awardedImprovement = 0
+            for (receipt, _, _) in receipts {
+                let sum = awardedImprovement.addingReportingOverflow(receipt.improvementXP)
+                guard !sum.overflow else { throw StoreError.sqlite("进步奖励超出范围。") }
+                awardedImprovement = sum.partialValue
+            }
+            let newlyObserved = (state.observedLegacyImprovementXP - previous.observedLegacyImprovementXP)
+                .multipliedReportingOverflow(by: DailyRewardPolicy.legacyScale)
+            let expected = previous.pendingImprovementXP.addingReportingOverflow(newlyObserved.partialValue)
+            let actual = state.pendingImprovementXP.addingReportingOverflow(awardedImprovement)
+            guard !newlyObserved.overflow, !expected.overflow, !actual.overflow, actual.partialValue == expected.partialValue else {
+                throw StoreError.sqlite("进步奖励必须对应已验证的新增里程碑，未保存本次事务。")
+            }
+        }
+        return PreparedDailyRewardSave(stateJSON: stateJSON, receipts: receipts)
+    }
+    private func saveDailyRewards(_ write: DailyRewardWrite, prepared: PreparedDailyRewardSave) throws {
+        for (receipt, json, hash) in prepared.receipts {
+            var claim: OpaquePointer?
+            guard sqlite3_prepare_v2(db, "INSERT INTO daily_reward_claims(id,day,receipt_hash) VALUES(?,?,?)", -1, &claim, nil) == SQLITE_OK,
+                  let claim else { throw failure() }
+            defer { sqlite3_finalize(claim) }
+            bind(receipt.id, at: 1, statement: claim); bind(receipt.day, at: 2, statement: claim); bind(hash, at: 3, statement: claim)
+            guard sqlite3_step(claim) == SQLITE_DONE else { throw failure() }
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, "INSERT INTO daily_reward_receipts(id,day,settled_at,receipt_json,receipt_hash,seen_at) VALUES(?,?,?,?,?,NULL)", -1, &statement, nil) == SQLITE_OK,
+                  let statement else { throw failure() }
+            defer { sqlite3_finalize(statement) }
+            bind(receipt.id, at: 1, statement: statement); bind(receipt.day, at: 2, statement: statement)
+            sqlite3_bind_double(statement, 3, receipt.settledAt.timeIntervalSince1970)
+            bind(json, at: 4, statement: statement); bind(hash, at: 5, statement: statement)
+            guard sqlite3_step(statement) == SQLITE_DONE else { throw failure() }
+        }
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "INSERT INTO daily_reward_checkpoint(id,revision,state_json,state_hash) VALUES(1,?,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,state_json=excluded.state_json,state_hash=excluded.state_hash", -1, &statement, nil) == SQLITE_OK,
+              let statement else { throw failure() }
+        defer { sqlite3_finalize(statement) }
+        sqlite3_bind_int64(statement, 1, write.state.revision)
+        bind(prepared.stateJSON, at: 2, statement: statement); bind(digest(prepared.stateJSON), at: 3, statement: statement)
+        guard sqlite3_step(statement) == SQLITE_DONE else { throw failure() }
+    }
+    private func dailyRewardReceipts(since: String, until: String, unseenOnly: Bool, limit: Int) throws -> [DailySettlementReceipt] {
+        guard (1...5000).contains(limit) else { throw StoreError.resultLimit(5000) }
+        var statement: OpaquePointer?
+        let sql = "SELECT receipt_json,receipt_hash FROM daily_reward_receipts WHERE day>=? AND day<=?\(unseenOnly ? " AND seen_at IS NULL" : "") ORDER BY day,id LIMIT ?"
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK, let statement else { throw failure() }
+        defer { sqlite3_finalize(statement) }
+        bind(since, at: 1, statement: statement); bind(until, at: 2, statement: statement); sqlite3_bind_int64(statement, 3, Int64(unseenOnly ? limit : limit + 1))
+        var rows: [DailySettlementReceipt] = []
+        while true {
+            let result = sqlite3_step(statement)
+            if result == SQLITE_DONE { break }
+            guard result == SQLITE_ROW else { throw failure() }
+            let json = String(cString: sqlite3_column_text(statement, 0))
+            guard json.utf8.count <= 65_536, digest(json) == String(cString: sqlite3_column_text(statement, 1)) else {
+                throw StoreError.sqlite("每日结算凭据校验失败，已保留原有数据。")
+            }
+            let receipt = try JSONDecoder().decode(DailySettlementReceipt.self, from: Data(json.utf8))
+            guard receipt.isValid else { throw StoreError.sqlite("每日结算凭据无效，已保留原有数据。") }
+            rows.append(receipt)
+            if rows.count > limit { throw StoreError.resultLimit(limit) }
+        }
+        return rows
+    }
+    /// Oldest first, with a bounded page. Opening or querying does not mark a
+    /// receipt seen, so interrupted animations remain available on relaunch.
+    public func queryUnseenDailyRewardReceipts(limit: Int = 10) throws -> [DailySettlementReceipt] {
+        lock.lock(); defer { lock.unlock() }
+        return try dailyRewardReceipts(since: "0000-01-01", until: "9999-12-31", unseenOnly: true, limit: limit)
+    }
+    public func queryDailyRewardReceipts(since: String, until: String = "9999-12-31", limit: Int = 5000) throws -> [DailySettlementReceipt] {
+        try validateRewardDay(since); try validateRewardDay(until)
+        lock.lock(); defer { lock.unlock() }
+        return try dailyRewardReceipts(since: since, until: until, unseenOnly: false, limit: limit)
+    }
+    public func dailyRewardReceiptCount(unseenOnly: Bool = true) throws -> Int {
+        lock.lock(); defer { lock.unlock() }
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM daily_reward_receipts\(unseenOnly ? " WHERE seen_at IS NULL" : "")", -1, &statement, nil) == SQLITE_OK,
+              let statement else { throw failure() }
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_step(statement) == SQLITE_ROW else { throw failure() }
+        return Int(sqlite3_column_int64(statement, 0))
+    }
+    public func acknowledgeDailyRewardReceipt(id: String) throws {
+        try validateIdentifier(id)
+        lock.lock(); defer { lock.unlock() }
+        try execute("BEGIN IMMEDIATE")
+        do {
+            guard try dailyRewardClaim(id: id) != nil else { throw StoreError.sqlite("未找到需要确认的每日结算凭据。") }
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, "UPDATE daily_reward_receipts SET seen_at=COALESCE(seen_at,?) WHERE id=?", -1, &statement, nil) == SQLITE_OK,
+                  let statement else { throw failure() }
+            defer { sqlite3_finalize(statement) }
+            sqlite3_bind_double(statement, 1, Date().timeIntervalSince1970); bind(id, at: 2, statement: statement)
+            guard sqlite3_step(statement) == SQLITE_DONE else { throw failure() }
+            try execute("COMMIT")
+        } catch { try? execute("ROLLBACK"); throw error }
+    }
+    public func acknowledgeAllDailyRewardReceipts() throws {
+        lock.lock(); defer { lock.unlock() }
+        try execute("BEGIN IMMEDIATE")
+        do {
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, "UPDATE daily_reward_receipts SET seen_at=? WHERE seen_at IS NULL", -1, &statement, nil) == SQLITE_OK,
+                  let statement else { throw failure() }
+            defer { sqlite3_finalize(statement) }
+            sqlite3_bind_double(statement, 1, Date().timeIntervalSince1970)
+            guard sqlite3_step(statement) == SQLITE_DONE else { throw failure() }
+            try execute("COMMIT")
+        } catch { try? execute("ROLLBACK"); throw error }
+    }
+    public func exportDailyRewardCSV(since: String = "0000-01-01", until: String = "9999-12-31") throws -> String {
+        try validateRewardDay(since); try validateRewardDay(until)
+        lock.lock(); defer { lock.unlock() }
+        let rows = try dailyRewardReceipts(since: since, until: until, unseenOnly: false, limit: 5000)
+        let zone = try readDailyRewardState()?.progressionTimezone ?? ""
+        let formatter = ISO8601DateFormatter(); formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        func quote(_ value: String) -> String { "\"" + value.replacingOccurrences(of: "\"", with: "\"\"") + "\"" }
+        let header = "day,progression_timezone,policy,score,ordinary_xp,improvement_xp,before_xp,after_xp,settled_at,level_before,level_after,keys,seconds,observed_intervals,estimated_wpm,consistency\n"
+        var lines: [String] = []
+        for receipt in rows {
+            var fields: [String] = [quote(receipt.day), quote(zone), quote(receipt.policy)]
+            fields.append(receipt.score.map { String($0) } ?? "")
+            fields += [String(receipt.ordinaryXP), String(receipt.improvementXP), String(receipt.beforeXP), String(receipt.afterXP)]
+            fields += [quote(formatter.string(from: receipt.settledAt)), String(receipt.levelBefore), String(receipt.levelAfter)]
+            fields += [String(receipt.totals.keys), String(receipt.totals.seconds), String(receipt.totals.intervals)]
+            fields.append(receipt.totals.wpm.map { String($0) } ?? "")
+            fields.append(receipt.totals.consistency.map { String($0) } ?? "")
+            lines.append(fields.joined(separator: ","))
+        }
+        return header + lines.joined(separator: "\n") + (rows.isEmpty ? "" : "\n")
     }
     private func rewardAwards(since: Date? = nil, until: Date? = nil, day: String? = nil, source: String? = nil, limit: Int) throws -> [RewardAward] {
         var clauses: [String] = []
@@ -970,7 +1252,8 @@ public final class AggregateStore: @unchecked Sendable {
             try execute("""
                 DELETE FROM daily; DELETE FROM activity_hourly; DELETE FROM activity_sessions;
                 DELETE FROM reward_attributions; DELETE FROM reward_awards; DELETE FROM reward_claims; DELETE FROM reward_improvement_claims;
-                DELETE FROM reward_daily; DELETE FROM reward_checkpoint; DELETE FROM reward_batches; COMMIT;
+                DELETE FROM reward_daily; DELETE FROM reward_checkpoint; DELETE FROM reward_batches;
+                DELETE FROM daily_reward_receipts; DELETE FROM daily_reward_claims; DELETE FROM daily_reward_checkpoint; COMMIT;
                 """)
         } catch { try? execute("ROLLBACK"); throw error }
         try execute("PRAGMA wal_checkpoint(TRUNCATE); VACUUM;")
@@ -999,6 +1282,15 @@ public final class AggregateStore: @unchecked Sendable {
             try deleteBefore(instant, table: "reward_awards", column: "awarded_at")
             try execute("DELETE FROM reward_awards WHERE rowid IN (SELECT rowid FROM reward_awards ORDER BY awarded_at DESC,id DESC LIMIT -1 OFFSET 200000)")
             try execute("DELETE FROM reward_attributions WHERE NOT EXISTS(SELECT 1 FROM reward_awards WHERE reward_awards.id=reward_attributions.award_id)")
+            // Unseen settlements survive retention so several days (or a long
+            // absence) can still be presented in order. Compact immutable
+            // claims remain after seen history is pruned to prevent reissue.
+            var receipts: OpaquePointer?
+            guard sqlite3_prepare_v2(db, "DELETE FROM daily_reward_receipts WHERE seen_at IS NOT NULL AND settled_at<?", -1, &receipts, nil) == SQLITE_OK,
+                  let receipts else { throw failure() }
+            defer { sqlite3_finalize(receipts) }
+            sqlite3_bind_double(receipts, 1, instant)
+            guard sqlite3_step(receipts) == SQLITE_DONE else { throw failure() }
             try execute("COMMIT")
         } catch { try? execute("ROLLBACK"); throw error }
     }

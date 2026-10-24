@@ -41,13 +41,19 @@ class ReleaseNoteTests(unittest.TestCase):
         actual = self.extract("## [0.3.2]\n- Current change.\n\n[Unreleased]: https://example.invalid/future\n[0.3.1]: https://example.invalid/old\n")
         self.assertEqual(actual, "## 0.3.2\n- Current change.\n")
 
+    def test_beta_notes_extract_only_the_exact_prerelease(self):
+        for version in ["0.5.0-beta", "0.5.0-beta.0", "0.5.0-beta.12"]:
+            with self.subTest(version=version):
+                actual = self.extract(f"## [{version}] - 2026-10-24\n- Beta change.\n## [0.4.1]\n- Old change.\n", version)
+                self.assertEqual(actual, f"## {version} - 2026-10-24\n- Beta change.\n")
+
     def test_missing_duplicate_or_empty_section_fails_closed(self):
         for text in ["## [0.3.1]\n- Old.\n", "## [0.3.2]\n- One.\n## [0.3.2]\n- Two.\n", "## [0.3.2]\n### Fixed\n\n## [0.3.1]\n- Old.\n"]:
             with self.subTest(text=text), self.assertRaises(ValueError):
                 self.extract(text)
 
     def test_invalid_version_and_oversized_changelog_are_rejected(self):
-        for version in ["0.3", "0.3.2.*", "../0.3.2", "00.3.2"]:
+        for version in ["0.3", "0.3.2.*", "../0.3.2", "00.3.2", "0.5.0-beta.01", "0.5.0-beta.", "0.5.0-beta/../x", "0.5.0-alpha", "0.5.0-beta+metadata", "1" * 129 + ".0.0"]:
             with self.subTest(version=version), self.assertRaises(ValueError):
                 self.extract("## [0.3.2]\n- Change.\n", version)
         with self.assertRaises(ValueError):

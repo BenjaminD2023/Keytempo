@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from email.utils import format_datetime
 from pathlib import Path
 import re
+from xml.parsers import expat
 import xml.etree.ElementTree as ET
 
 SPARKLE = "http://www.andymatuschak.org/xml-namespaces/sparkle"
@@ -41,9 +42,35 @@ def numeric_build(value: str) -> int:
 
 
 def release_version(value: str) -> str:
-    if not re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", value):
-        raise ValueError("Version must have three numeric components")
+    if len(value) > 128 or not re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-beta(?:\.(?:0|[1-9][0-9]*))?)?", value):
+        raise ValueError("Version must have three numeric components and an optional -beta or -beta.N suffix")
     return value
+
+
+def raw_release_items(data: bytes) -> list[bytes]:
+    """Keep signed historical item bytes, including their original XML style."""
+    parser = expat.ParserCreate()
+    stack: list[str] = []
+    starts: list[int] = []
+    items: list[bytes] = []
+
+    def start(name, _attributes):
+        if stack == ["rss", "channel"] and name == "item":
+            starts.append(parser.CurrentByteIndex)
+        stack.append(name)
+
+    def end(name):
+        if stack == ["rss", "channel", "item"] and name == "item":
+            close = data.find(b">", parser.CurrentByteIndex)
+            if close < 0:
+                raise ValueError("Unterminated historical release item")
+            items.append(data[starts.pop():close + 1])
+        stack.pop()
+
+    parser.StartElementHandler = start
+    parser.EndElementHandler = end
+    parser.Parse(data, True)
+    return items
 
 
 def load_feed(path: Path) -> ET.Element:
@@ -68,6 +95,11 @@ def load_feed(path: Path) -> ET.Element:
     for item in items:
         build = numeric_build(item.findtext(tag(SPARKLE, "version"), ""))
         version = release_version(item.findtext(tag(SPARKLE, "shortVersionString"), ""))
+        channels = item.findall(tag(SPARKLE, "channel"))
+        if len(channels) > 1 or (channels and channels[0].text != "beta"):
+            raise ValueError("Release channel must be the default channel or beta")
+        if ("-beta" in version) != bool(channels):
+            raise ValueError("Beta release versions must use the beta update channel")
         if build in builds or version in versions:
             raise ValueError("Duplicate release version or build")
         builds.add(build)
@@ -108,6 +140,9 @@ def make_feed(previous: Path, *, version: str, build: str, signature: str,
     channel = root.find("channel")
     assert channel is not None
     items = channel.findall("item")
+    preserved = raw_release_items(previous.read_bytes())
+    if len(preserved) != len(items):
+        raise ValueError("Historical release item boundaries do not match the parsed feed")
     if any(numeric_build(item.findtext(tag(SPARKLE, "version"), "")) >= build_number for item in items):
         raise ValueError("New build must be newer than every published update")
     if any(item.findtext(tag(SPARKLE, "shortVersionString")) == version for item in items):
@@ -132,6 +167,8 @@ def make_feed(previous: Path, *, version: str, build: str, signature: str,
     ET.SubElement(item, "pubDate").text = format_datetime(instant.astimezone(timezone.utc), usegmt=True)
     ET.SubElement(item, tag(SPARKLE, "version")).text = build
     ET.SubElement(item, tag(SPARKLE, "shortVersionString")).text = version
+    if "-beta" in version:
+        ET.SubElement(item, tag(SPARKLE, "channel")).text = "beta"
     ET.SubElement(item, tag(SPARKLE, "minimumSystemVersion")).text = minimum_os
     ET.SubElement(item, "description").text = "See the linked release for changes, signing details and known limitations."
     archive = f"Keytempo-{version}-macos-arm64.zip"
@@ -141,10 +178,15 @@ def make_feed(previous: Path, *, version: str, build: str, signature: str,
         tag(SPARKLE, "edSignature"): signature,
     })
     channel.append(item)
-    for previous_item in sorted(items, key=lambda value: numeric_build(value.findtext(tag(SPARKLE, "version"), "")), reverse=True)[:MAX_ITEMS - 1]:
-        channel.append(previous_item)
+    retained = sorted(enumerate(items), key=lambda pair: numeric_build(pair[1].findtext(tag(SPARKLE, "version"), "")), reverse=True)[:MAX_ITEMS - 1]
+    for index, _previous_item in retained:
+        channel.append(ET.Comment(f"keytempo-preserve-release-{index}"))
     ET.indent(root, space="  ")
     result = ET.tostring(root, encoding="utf-8", xml_declaration=True) + b"\n"
+    # One substitution pass never treats a comment inside an inserted old
+    # item as another placeholder. Historical item contents stay byte-exact.
+    result = re.sub(rb"<!--keytempo-preserve-release-([0-9]+)-->",
+                    lambda match: preserved[int(match.group(1))], result)
     if len(result) > MAX_FEED_BYTES:
         raise ValueError("Generated feed exceeds the size limit")
     return result

@@ -84,7 +84,7 @@ final class RateConsistencyStoreTests {
         #expect(try snapshot("daily", columns: dailyColumns, at: url) == before[0])
         #expect(try snapshot("activity_hourly", columns: hourlyColumns, at: url) == before[1])
         #expect(try snapshot("activity_sessions", columns: sessionColumns, at: url) == before[2])
-        #expect(try scalar("PRAGMA user_version", at: url) == "5")
+        #expect(try scalar("PRAGMA user_version", at: url) == "6")
         #expect(try scalar("SELECT value FROM unrelated", at: url) == "keep")
         let hours = try db.queryHourly(since: hour, until: hour.addingTimeInterval(3600))
         let sessions = try db.querySessions(since: hour, until: hour.addingTimeInterval(3600))
@@ -201,10 +201,10 @@ final class RateConsistencyStoreTests {
         #expect(try scalar("SELECT COUNT(*) FROM pragma_table_info('activity_sessions')", at: url) == "10")
         #expect(try scalar("SELECT keys FROM activity_hourly", at: url) == "40")
         let future = location(); defer { try? FileManager.default.removeItem(at: future.deletingLastPathComponent()) }
-        try execute("CREATE TABLE future_data(value TEXT); INSERT INTO future_data VALUES('keep'); PRAGMA user_version=6", at: future)
+        try execute("CREATE TABLE future_data(value TEXT); INSERT INTO future_data VALUES('keep'); PRAGMA user_version=7", at: future)
         let mode = try scalar("PRAGMA journal_mode", at: future)
         #expect(throws: (any Error).self) { try AggregateStore(url: future, now: self.hour, timeZone: self.utc) }
-        #expect(try scalar("PRAGMA user_version", at: future) == "6")
+        #expect(try scalar("PRAGMA user_version", at: future) == "7")
         #expect(try scalar("PRAGMA journal_mode", at: future) == mode)
         #expect(try scalar("SELECT value FROM future_data", at: future) == "keep")
     }

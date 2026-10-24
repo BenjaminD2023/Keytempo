@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing release tag, matching Info.plist (for example v0.3.0)
+        description: Existing stable or beta release tag, matching Info.plist (for example v0.5.0-beta)
         required: true
         type: string
 
@@ -35,6 +35,9 @@ jobs:
         run: |
           set -euo pipefail
           app_version="$(plutil -extract CFBundleShortVersionString raw -o - Resources/Info.plist)"
+          # The extractor accepts only numeric SemVer with optional -beta[.N]
+          # and requires exactly this release's complete changelog section.
+          python3 scripts/release-notes.py CHANGELOG.md "$app_version" > /dev/null
           if [[ "$RELEASE_TAG" != "v$app_version" ]]; then
             print -u2 "Tag $RELEASE_TAG does not match Info.plist version $app_version"
             exit 1

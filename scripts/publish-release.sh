@@ -31,6 +31,13 @@ public_key="$(plutil -extract SUPublicEDKey raw -o - "$info_path")"
 minimum_os="$(plutil -extract LSMinimumSystemVersion raw -o - "$info_path")"
 feed_url="$(plutil -extract SUFeedURL raw -o - "$info_path")"
 release_tag="v$app_version"
+python3 scripts/release-notes.py CHANGELOG.md "$app_version" >/dev/null
+prerelease_options=()
+publication_options=(--latest)
+if [[ "$app_version" == *-beta* ]]; then
+    prerelease_options=(--prerelease)
+    publication_options=(--prerelease --latest=false)
+fi
 head_commit="$(git rev-parse HEAD)"
 [[ "$bundle_identifier" == local.benjamin.TypingSpeed ]] || fail "Unexpected app bundle identifier."
 [[ "$signing_channel" == local-development || "$signing_channel" == developer-id ]] || fail "Ad-hoc apps cannot enter the stable update channel."
@@ -119,7 +126,7 @@ notes_path="$PWD/dist/release-notes.md"
     python3 scripts/release-notes.py CHANGELOG.md "$app_version"
 } > "$notes_path"
 gh release create "$release_tag" "$archive_path" "$PWD/dist/Keytempo-${app_version}-source.zip" "$PWD/dist/SHA256SUMS" \
-    --repo "$repository" --verify-tag --draft --title "Keytempo $app_version" --notes-file "$notes_path"
-gh release edit "$release_tag" --repo "$repository" --draft=false --latest
+    --repo "$repository" --verify-tag --draft "${prerelease_options[@]}" --title "Keytempo $app_version" --notes-file "$notes_path"
+gh release edit "$release_tag" --repo "$repository" --draft=false "${publication_options[@]}"
 cp dist/appcast.xml appcast.xml
 print -- "Published $release_tag. Review, commit and push appcast.xml to main to enable update discovery."
