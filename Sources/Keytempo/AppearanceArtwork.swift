@@ -150,34 +150,57 @@ struct RankSeal: View {
     var body: some View {
         ZStack {
             Canvas { context, bounds in
-                let center = CGPoint(x: bounds.width / 2, y: bounds.height / 2)
-                let radius = bounds.width / 2
-                func polygon(_ r: CGFloat, points: Int, rotation: Double) -> Path {
-                    var p = Path()
-                    for i in 0..<points {
-                        let a = Double(i) / Double(points) * 2 * .pi + rotation
-                        let v = CGPoint(x: center.x + cos(a) * r, y: center.y + sin(a) * r)
-                        if i == 0 { p.move(to: v) } else { p.addLine(to: v) }
-                    }
-                    p.closeSubpath(); return p
-                }
-                let outline = polygon(radius * 0.78, points: 6, rotation: -.pi / 2)
-                context.fill(outline, with: .linearGradient(Gradient(colors: [colors[0].opacity(scheme == .dark ? 0.22 : 0.13), colors[1].opacity(0.04), colors[2].opacity(0.17)]), startPoint: .zero, endPoint: CGPoint(x: bounds.width, y: bounds.height)))
-                context.stroke(outline, with: .linearGradient(Gradient(colors: [colors[1], colors[0].opacity(0.4), colors[2]]), startPoint: .zero, endPoint: CGPoint(x: bounds.width, y: bounds.height)), lineWidth: size > 50 ? 1.25 : 1)
-                context.stroke(polygon(radius * 0.64, points: 6, rotation: -.pi / 2), with: .color(colors[0].opacity(contrast == .increased ? 0.7 : 0.25)), lineWidth: 0.65)
-                for i in 0..<6 {
-                    let a = Double(i) / 6 * .pi * 2 - .pi / 2
-                    var p = Path()
-                    let inner = radius * (i.isMultiple(of: 3) ? 0.83 : 0.88)
-                    p.move(to: CGPoint(x: center.x + cos(a) * inner, y: center.y + sin(a) * inner))
-                    p.addLine(to: CGPoint(x: center.x + cos(a) * radius * 0.96, y: center.y + sin(a) * radius * 0.96))
-                    context.stroke(p, with: .color(colors[i % colors.count].opacity(0.8)), style: StrokeStyle(lineWidth: size > 50 ? 1.3 : 0.9, lineCap: .round))
-                }
+                drawSeal(context: &context, bounds: bounds)
             }
             Image(systemName: symbol)
                 .font(.system(size: size * 0.31, weight: .regular))
                 .symbolRenderingMode(.hierarchical).foregroundStyle(colors[0])
         }.frame(width: size, height: size).accessibilityHidden(true)
+    }
+
+    private func drawSeal(context: inout GraphicsContext, bounds: CGSize) {
+        let palette: [Color] = colors
+        let center = CGPoint(x: bounds.width / 2, y: bounds.height / 2)
+        let radius: CGFloat = bounds.width / 2
+        let end = CGPoint(x: bounds.width, y: bounds.height)
+        let outline = polygon(radius: radius * 0.78, center: center)
+        let fillColors: [Color] = [palette[0].opacity(scheme == .dark ? 0.22 : 0.13),
+                                   palette[1].opacity(0.04), palette[2].opacity(0.17)]
+        let fill: GraphicsContext.Shading = .linearGradient(Gradient(colors: fillColors), startPoint: .zero, endPoint: end)
+        context.fill(outline, with: fill)
+
+        let strokeColors: [Color] = [palette[1], palette[0].opacity(0.4), palette[2]]
+        let stroke: GraphicsContext.Shading = .linearGradient(Gradient(colors: strokeColors), startPoint: .zero, endPoint: end)
+        let outlineWidth: CGFloat = size > 50 ? 1.25 : 1
+        context.stroke(outline, with: stroke, lineWidth: outlineWidth)
+        let innerOutline = polygon(radius: radius * 0.64, center: center)
+        let innerColor = palette[0].opacity(contrast == .increased ? 0.7 : 0.25)
+        context.stroke(innerOutline, with: .color(innerColor), lineWidth: 0.65)
+
+        let cutStyle = StrokeStyle(lineWidth: size > 50 ? 1.3 : 0.9, lineCap: .round)
+        for index in 0..<6 {
+            let angle: Double = Double(index) / 6 * Double.pi * 2 - Double.pi / 2
+            let dx = CGFloat(cos(angle)), dy = CGFloat(sin(angle))
+            let inner: CGFloat = radius * (index.isMultiple(of: 3) ? 0.83 : 0.88)
+            let start = CGPoint(x: center.x + dx * inner, y: center.y + dy * inner)
+            let finish = CGPoint(x: center.x + dx * radius * 0.96, y: center.y + dy * radius * 0.96)
+            var cut = Path()
+            cut.move(to: start); cut.addLine(to: finish)
+            let color = palette[index % palette.count].opacity(0.8)
+            context.stroke(cut, with: .color(color), style: cutStyle)
+        }
+    }
+
+    private func polygon(radius: CGFloat, center: CGPoint) -> Path {
+        var path = Path()
+        for index in 0..<6 {
+            let angle: Double = Double(index) / 6 * 2 * Double.pi - Double.pi / 2
+            let dx = CGFloat(cos(angle)), dy = CGFloat(sin(angle))
+            let point = CGPoint(x: center.x + dx * radius, y: center.y + dy * radius)
+            if index == 0 { path.move(to: point) } else { path.addLine(to: point) }
+        }
+        path.closeSubpath()
+        return path
     }
 }
 
