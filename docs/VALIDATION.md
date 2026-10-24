@@ -29,7 +29,11 @@ XP 用例确认 299→300 秒与 1,999→2,000 键的整数门槛、跨日／重
 
 已公开发布 [v0.4.1](https://github.com/BenjaminD2023/Keytempo/releases/tag/v0.4.1)，内部 build 17，源码标签为 `6fd2f4ef2996ebab42bfbc846d61f8167f72dbd9`。从该干净提交再次执行完整测试／Release／原生集成检查成功，GitHub [CI](https://github.com/BenjaminD2023/Keytempo/actions/runs/39992901176) 与 [Release validation](https://github.com/BenjaminD2023/Keytempo/actions/runs/39992902008) 均成功。公开下载的 arm64 ZIP、源码 ZIP 和 SHA256SUMS 与本地发布产物逐字节一致；公开原始更新源与签名源一致，首项为 0.4.1 / 17，归档与 XML 的 Ed25519 签名复核通过。Release note 仅包含 0.4.1 改动，完整 changelog 保留历史；仍为稳定 Apple Development 签名，未宣称 Developer ID 公证发行。
 
-实际升级前已通过原生设置确认 0.4.0 的输入监控／辅助功能均已授权，并使用 SQLite backup 保存一致快照：schema 3、13 条日汇总、5 条小时行、5 个会话。中文界面、混合菜单、中文兼容／疑似过滤、自动更新和用户已开启的按应用记录均保留原设置。随后 Mac 锁屏，已请求解锁；本机 Sparkle 安装、schema 3→5 实际迁移和升级后权限／数据保留尚待完成，不能用公开下载校验代替这些运行验收。
+实际升级已完成：原生 Sparkle 从已安装的 0.4.0 发现 0.4.1，执行下载、安装并重新启动。`/Applications/Keytempo.app` 确认为 **0.4.1 build 17**，嵌入源码提交为 `6fd2f4ef2996ebab42bfbc846d61f8167f72dbd9`、`clean=true`，可执行文件与公开发布包逐字节一致。升级前后的 designated requirement SHA-256 均为 `6fdaca68a1f7838c6dcd83bfdc05a9d2f382f00a7080ae28ca1b82d6c655b3f4`。升级后设置仍显示输入监控与辅助功能均已授权，点击重新检查后仍保留，没有重新授予权限；再次“检查更新”明确显示 0.4.1 已是最新版本。七项持久用户偏好逐项相同，中文界面、混合菜单、中文兼容／疑似过滤、更新选项及用户已开启的按应用记录保留；只有更新器的 `SULastCheckTime` 正常改变。安装身份与偏好对照记录为 `artifacts/release-0.4.1-build17/installed-verification.json`。此结论限于该 Mac 的本次升级，不把稳定签名当作所有机器必然保留授权的保证。
+
+升级前以 SQLite backup 保存的最新一致快照 `immediate-before-install.sqlite` 为 schema 3、13 条日汇总、5 条小时行、5 个会话。升级完成后使用 `verify-installed-data.py` 以 SQLite `mode=ro` 和只读事务逐主键／旧数值字段核对生产库：**schema 3→5，全部旧行保留，无累计数值减少、无元数据变化，`quick_check` 通过**。继续使用期间，旧日汇总的六个数值单元合法增长，其中累计敲键 15,540→15,744、观察时长 2,010.077078→2,039.272741 秒；五条旧小时行与五个旧会话逐值相同，并新增三条小时行、两个会话。原始 `before-upgrade.sqlite` 的第二次对照也通过。报告为 `artifacts/release-0.4.1-build17/installed-data-verification.json` 与 `installed-data-original-baseline-verification.json`；验证未修改生产数据库，也未输出应用／上下文列表或输入内容。
+
+新奖励覆盖从 **2026-10-24 12:13:11.277503（Asia/Shanghai）** 开始，没有为旧统计补发积分或 XP。上述只读落盘快照的奖励检查点为 revision 2，校验和与状态版本一致，已覆盖 **157 个新按键、21.819725 秒、1.080401 分**，XP 为 0，未满块保留 57 键；当时新增表包含一个检查点、两个批次、四条奖励、四条奖励标识、四条归属、一条日奖励汇总，尚无进步领取。随后原生界面观察到 **200 个新按键、27.6 秒、约 1.4 分**；这是继续输入后的较晚实时快照，与先前落盘的 157 键／21.82 秒／1.08 分属于不同时间点，不混称同一次数据库结果。300 秒与 2,000 键两项基础 XP 门槛均未达到，XP 为 0 符合独立经验值规则。
 
 没有将本次元数据夹具当作新的第三方 App 物理输入误计／漏计验收，也未新增完整电池增量低于 1 W 的结论；资源范围以 [PERFORMANCE.md](../PERFORMANCE.md) 为准。下方 0.4.0 与更早章节保留各版本当时的算法、发布及验证事实。
 
