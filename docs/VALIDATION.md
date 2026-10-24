@@ -14,6 +14,14 @@
 
 菜单使用 SF Symbols，宽度保留显式测量和混合模式预留；颜色依赖现有快照，不增设动画定时器或高频轮询。系统外观变化通过公开 NSView 生命周期刷新，辅助显示选项变化使用 NSWorkspace 通知；暂停／权限不足／高对比度回退系统色，无可用当前速度时不伪造渐变速度。自定义颜色亮度适配明暗模式；对比调整基于保守的明暗参考背景，不保证任意壁纸下的实际对比度。未改变系统明暗或高对比度设置，未重新测量十分钟 CPU／电池／内存，不宣称资源目标已重新验收。
 
+### RC 公开发布与内置升级补验
+
+已发布 [v0.5.0-rc](https://github.com/BenjaminD2023/Keytempo/releases/tag/v0.5.0-rc)，源标签 `8d742108bfd55458bd1c5b8a407be694705899fc`；GitHub [Release validation](https://github.com/BenjaminD2023/Keytempo/actions/runs/40070257611) 全部成功。App／源包重下载后与 SHA256SUMS 一致，公开 appcast 与提交内容一致，Ed25519 源与包签名验证通过。新条目为预发布 beta 通道／build 20；原八个 item 元素在最终签名后逐字节保留。RC 为 GitHub prerelease，Latest 稳定版仍为 v0.4.1。
+
+本机 beta 的“检查更新”实际发现 0.5.0-rc，完成 Sparkle 下载、Ready to Install、Install and Relaunch 全链路。安装后的 `/Applications/Keytempo.app` 为 0.5.0-rc／20，二进制与本次已标记干净源码的发布构建相同；稳定 designated requirement 哈希仍为 `6fdaca68a1f7838c6dcd83bfdc05a9d2f382f00a7080ae28ca1b82d6c655b3f4`。原生设置内 Input Monitoring／Accessibility 均仍为 Allowed，未重新授权。设置里的“Levels & Appearance…”可直接打开新页面，真实账户的既有等级及比例进度保留，锁定外观没有被预览提前解锁。
+
+升级前已创建一致性数据库、设置与 beta App 备份。升级后 SQLite integrity check 为 ok、schema 仍为 6；旧表行数未减少，累计 XP、转换基数、覆盖起点、账本沿革及固定时区保持一致。备份在本机 `~/Library/Application Support/TypingSpeed/Backups/`，不随源码或公开发布包分发。本轮未更改真实账户外观偏好；截图／交互的高等级与自定义范围场景均来自隔离夹具。
+
 ## 0.5.0-beta build 19 验证（2026-10-24）
 
 本轮将此前仅在预览中讨论的每日评分与延迟结算接入原生 App。`daily-score-v3` 使用同一已接受输入流的加权 WPM、合并完整一秒样本的 Monkeytype 式稳定度、实际间隔时长与敲键量；未知样本不变为零或满稳定度。Score 与待结算 XP 并排显示，旧 `score-v2` 账本单独保留。新版从启用日开始覆盖，不回填旧日分数。
