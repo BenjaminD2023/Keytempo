@@ -1,6 +1,6 @@
 # 功能验证与输入覆盖
 
-记录更新：2026-10-23（Asia/Shanghai），历史验证基线 Keytempo 1.1.0 build 7，安装位置 `/Applications/Keytempo.app`。测试机为 Apple M4 MacBook Air、24 GB 内存、macOS 27.0。项目最低部署版本为 macOS 13；编译目标通过不代表已在 macOS 13 实机验证。
+记录更新：2026-10-25（Asia/Shanghai），历史验证基线 Keytempo 1.1.0 build 7，安装位置 `/Applications/Keytempo.app`。测试机为 Apple M4 MacBook Air、24 GB 内存、macOS 27.0。项目最低部署版本为 macOS 13；编译目标通过不代表已在 macOS 13 实机验证。
 
 ## 0.5.0 稳定版发布前验证（2026-10-25，build 21）
 
@@ -8,7 +8,9 @@
 
 安装候选与原 App 的签名指定要求一致。实际窗口已显示已提交的日分数、奖励 XP、累计余额及升级结果，后续设置显示 0.5.0，输入监控和辅助功能仍均为 Allowed。本地测试等级已根据原注入清单与备份撤销：只去除明确的人工 XP 增量并同步修正收据累计余额、等级及哈希；真实奖励、输入历史、当前未结算日和原有偏好保留。恢复先在独立副本演练并通过正式 AggregateStore／DailyRewardEngine 读取，再在退出 App 后备份并以事务执行；此维护操作不进入发布 App，也不会重置其他用户进度。
 
-本轮未重新测量功耗或扩展输入覆盖结论。发布前结果位于本地 `artifacts/release-0.5.0-build21/`；个人数据库、恢复工具与本地诊断不进入源代码包或发布附件。最终公开下载、更新源与 CI 结果在发布后单独记录。
+本轮未重新测量功耗或扩展输入覆盖结论。发布前结果位于本地 `artifacts/release-0.5.0-build21/`；个人数据库、恢复工具与本地诊断不进入源代码包或发布附件。正式发布为 [v0.5.0](https://github.com/BenjaminD2023/Keytempo/releases/tag/v0.5.0)，内部 build 21；最终标签提交 `59b4e05`。GitHub [CI](https://github.com/BenjaminD2023/Keytempo/actions/runs/40116361201) 与[发布校验](https://github.com/BenjaminD2023/Keytempo/actions/runs/40116364054) 均通过。初次 CI 使用 Swift 6.1／Xcode 16.4 时遇到徽章绘制表达式类型检查超时，拆成显式类型的小函数后重新通过；几何、颜色与动画规则不变。标签在正式附件发布前调整至此最终提交，已发布的旧版本未改动。
+
+公开下载的 App ZIP、源码 ZIP 与 SHA256SUMS 已逐项核验；源码包只含已跟踪文件，包含许可证、排除个人数据库与本地维护脚本。下载 App 的版本、build、干净源码标记与标签提交匹配，可执行文件与最终本地安装完全一致。GitHub Release 是稳定 Latest，发行说明只提取本版 changelog 段落；Sparkle appcast 最新项为稳定 0.5.0／21，签名验证通过。
 
 ## 0.5.0 速度图案与外观精简（2026-10-24，当前本地候选）
 
