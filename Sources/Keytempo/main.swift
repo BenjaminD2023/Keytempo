@@ -11,10 +11,11 @@ import TypingCore
     private var settlementWindow: NSWindow?
     private var handingOffSettlement = false
     private var displayOptionsObserver: NSObjectProtocol?
+    private var menuIconEffects: MenuIconEffects?
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         if CommandLine.arguments.contains("--self-test-editor") {
-            let failures = runConfirmedEditorChecks() + runInputBufferChecks() + runAppModelChecks() + runInputLanguageChecks() + runLocalizationChecks() + runDisplayFormattingChecks() + runAppearanceChecks()
+            let failures = runConfirmedEditorChecks() + runInputBufferChecks() + runAppModelChecks(settlementHandoffCheck: AppDelegate.runSettlementHandoffChecks) + runInputLanguageChecks() + runLocalizationChecks() + runDisplayFormattingChecks() + runAppearanceChecks() + runMenuIconEffectChecks()
             print(failures.isEmpty ? "PASS: editor, language, localization, buffer and coordinator/persistence integration checks" : failures.joined(separator: "\n"))
             exit(failures.isEmpty ? 0 : 1)
         }
@@ -24,7 +25,16 @@ import TypingCore
         model.updates.start()
         model.openStats = { [weak self] in self?.showStatistics() }
         model.openSettings = { [weak self] in self?.showSettings() }
-        model.onAppearanceUpdate = { [weak self] in self?.applyAppearance(); self?.updateMenu() }
+        model.onAppearanceUpdate = { [weak self] in self?.menuIconEffects?.cancel(); self?.applyAppearance(); self?.updateMenu() }
+        model.onMenuEffectPreview = { [weak self] in
+            guard let self, self.statusItem?.button != nil else { return }
+            self.menuIconEffects?.preview(
+                permitted: !self.model.isPaused && self.model.hasInputPermission && self.model.hasAccessibilityPermission,
+                level: self.model.appearanceLevel, color: NSColor.labelColor, enabled: self.model.menuIconMotionEnabled) { [weak self] sample in
+                    self?.model.menuEffectPreviewWPM = sample
+                    self?.updateMenu()
+                }
+        }
         applyAppearance()
         model.onMenuUpdate = { [weak self] in self?.updateMenu() }
         model.onSettlementAvailable = { [weak self] in self?.presentPendingSettlement() }
@@ -40,6 +50,7 @@ import TypingCore
         statusItem.button?.font = StatusItemPresentation.font
         statusItem.button?.cell?.usesSingleLineMode = true
         if let button = statusItem.button {
+            menuIconEffects = MenuIconEffects(button: button)
             let observer = MenuAppearanceObserver(frame: .zero)
             observer.onAppearanceChange = { [weak self] in self?.updateMenu() }
             button.addSubview(observer)
@@ -112,21 +123,23 @@ import TypingCore
             else { title += value.map { " \(prefix)\($0.formatted(.number.precision(.fractionLength(0)))) \(unit)" } ?? " — \(unit)" }
             if model.phase == "idle", value != nil { title += " ·" }
         }
+        title = title.trimmingCharacters(in: .whitespaces)
         if let button = statusItem.button {
-            let width = title.isEmpty ? 26 : StatusItemPresentation.width(for: "⌨" + title, mode: model.menuDisplay) + 6
+            let width = StatusItemPresentation.width(for: title, mode: model.menuDisplay)
             if statusItem.length != width { statusItem.length = width }
-            let dark = button.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            let customTint = model.menuAppearanceTint(dark: dark,
-                increasedContrast: NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast)
-            let foreground = customTint ?? NSColor.labelColor
+            let foreground = NSColor.labelColor
             let attributed = NSAttributedString(string: title, attributes: [.font: StatusItemPresentation.font, .foregroundColor: foreground])
             if !button.attributedTitle.isEqual(to: attributed) { button.attributedTitle = attributed }
-            let symbol = AppAppearanceStyle.menuSymbol(style: model.effectiveMenuBarStyle)
-            var configuration = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
-            if let customTint { configuration = configuration.applying(NSImage.SymbolConfiguration(paletteColors: [customTint])) }
-            let icon = NSImage(systemSymbolName: symbol, accessibilityDescription: "Keytempo")?.withSymbolConfiguration(configuration)
-            icon?.isTemplate = customTint == nil
-            button.image = icon; button.imagePosition = .imageLeading
+            let level = model.dailyRewardState.flatMap { DailyLevelProgress(totalXP: $0.totalXP) }?.level ?? 1
+            let iconWPM = model.menuEffectPreviewWPM.map(Double.init) ?? model.appearanceMenuWPM
+            let icon = MenuIconRenderer.image(style: model.effectiveMenuBarStyle, level: level, wpm: iconWPM)
+            if button.image !== icon { menuIconEffects?.iconDidChange(); button.image = icon }
+            button.contentTintColor = nil
+            button.imagePosition = title.isEmpty ? .imageOnly : .imageLeading
+            menuIconEffects?.update(typing: model.phase == "typing" && !model.selectedSpeedIsRecent,
+                permitted: !model.isPaused && model.hasInputPermission && model.hasAccessibilityPermission,
+                level: level, color: foreground, wpm: model.appearanceMenuWPM,
+                enabled: model.menuIconMotionEnabled, sampledAt: model.menuSnapshotUptime)
         }
         var tooltip = L("Keytempo · %@ · %@ · 输入速度约每秒更新。停止后保留最近值，等待不计时。WPM 为按键折算估算；KPM 可在设置中选择。", L(model.status), L("合并全部输入语言"))
         if model.menuDisplay == "hybrid" {
@@ -138,6 +151,7 @@ import TypingCore
         statusItem.button?.setAccessibilityLabel(L("Keytempo 打字统计 %@ · %@", title, L(model.status)))
     }
     @objc private func togglePopover() {
+        menuIconEffects?.cancel()
         model.monitor.checkSystemState()
         model.refreshSnapshot()
         if popover.isShown { popover.performClose(nil); model.closeSettlementPresentation() }
@@ -150,8 +164,12 @@ import TypingCore
         }
     }
     func popoverDidClose(_ notification: Notification) {
+        menuIconEffects?.cancel()
         popover.contentViewController = nil
-        if !handingOffSettlement { model.closeSettlementPresentation() }
+        // The animated close callback can arrive after the synchronous handoff
+        // finishes. Once the panel owns the queue, closing the popover must not
+        // clear its receipt and strand the panel in its loading state.
+        if settlementWindow == nil && !handingOffSettlement { model.closeSettlementPresentation() }
     }
     private func window<V: View>(title: String, view: V, size: NSSize) -> NSWindow {
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
@@ -205,11 +223,13 @@ import TypingCore
     func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow else { return }
         if window === statsWindow {
+            menuIconEffects?.cancel()
             if settlementWindow == nil { model.closeSettlementPresentation() }
             model.statisticsVisible = false; model.historyVisible = false; model.releaseHistory(); model.releaseActivity(); model.interruptConfirmed()
             // Drop editor/Charts state after closing; the menu does not retain a hidden dashboard.
             window.contentViewController = nil; statsWindow = nil
         } else if window === settingsWindow {
+            menuIconEffects?.cancel()
             if settlementWindow == nil { model.closeSettlementPresentation() }
             window.contentViewController = nil; settingsWindow = nil
         }
@@ -229,8 +249,48 @@ import TypingCore
         if settlementWindow == nil && !handingOffSettlement { model?.closeSettlementPresentation() }
     }
     func applicationWillTerminate(_ notification: Notification) {
+        menuIconEffects?.shutdown()
         if let displayOptionsObserver { NSWorkspace.shared.notificationCenter.removeObserver(displayOptionsObserver) }
         model.flushBeforeExit()
+    }
+}
+
+extension AppDelegate {
+    /// Runs against the isolated daily-reward fixture, without showing a window.
+    /// Both notification orders exercise the real popover delegate callback.
+    static func runSettlementHandoffChecks(model: AppModel) -> [String] {
+        guard let receipt = model.settlementReceipt else {
+            return ["FAIL: settlement handoff fixture has no committed receipt"]
+        }
+        let owner = AppDelegate()
+        owner.model = model
+        let notification = Notification(name: NSPopover.didCloseNotification, object: owner.popover)
+        let totalXP = model.dailyRewardState?.totalXP
+        var failures = [String]()
+        func expect(_ condition: Bool, _ message: String) {
+            if !condition { failures.append("FAIL: settlement handoff \(message)") }
+        }
+
+        owner.handingOffSettlement = true
+        owner.popoverDidClose(notification)
+        expect(model.settlementReceipt?.id == receipt.id, "synchronous popover close preserves the pending receipt")
+
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 460, height: 560),
+                            styleMask: .borderless, backing: .buffered, defer: true)
+        panel.isReleasedWhenClosed = false
+        owner.settlementWindow = panel
+        owner.handingOffSettlement = false
+        owner.popoverDidClose(notification)
+        expect(model.settlementReceipt?.id == receipt.id, "delayed popover close preserves the panel's receipt")
+        owner.popoverDidClose(notification)
+        expect(model.settlementReceipt?.id == receipt.id, "repeated popover close cannot empty the settlement panel")
+
+        owner.settlementWindow = nil
+        panel.close()
+        owner.popoverDidClose(notification)
+        expect(model.settlementReceipt == nil, "ordinary popover dismissal still cancels its presentation request")
+        expect(model.dailyRewardState?.totalXP == totalXP, "handoff and dismissal never alter credited XP")
+        return failures
     }
 }
 
@@ -249,12 +309,24 @@ private struct SettlementQueueHost: View {
     var body: some View {
         Group {
             if let receipt = model.settlementReceipt {
-                SettlementView(presentation: SettlementPresentation(receipt), position: model.settlementQueuePosition,
+                SettlementView(presentation: SettlementPresentation(receipt), theme: model.effectiveAppearanceTheme,
+                               position: model.settlementQueuePosition,
                                count: model.settlementQueueCount,
                                onNext: { model.acknowledgeSettlement() },
                                onSkipAll: { model.acknowledgeSettlement(skipAll: true) }, onClose: close)
                     .id(receipt.id).disabled(model.settlementAcknowledging)
-            } else { ProgressView().frame(width: 460, height: 560) }
+            } else {
+                VStack(spacing: 16) {
+                    if let error = model.dailyRewardError {
+                        Image(systemName: "exclamationmark.circle").font(.title2).foregroundStyle(.secondary)
+                        Text(error).font(.callout).multilineTextAlignment(.center)
+                        Button(L("重试加载"), action: model.requestSettlementPresentation)
+                    } else {
+                        ProgressView()
+                    }
+                    Button(L("关闭"), action: close).keyboardShortcut(.cancelAction)
+                }.padding(32).frame(width: 460, height: 560)
+            }
         }.environment(\.locale, Locale(identifier: model.interfaceLanguage)).keytempoAppearance(model: model)
     }
 }

@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-24T17:19:00Z",
+  "title": "Design System: Keytempo",
+  "extensions": {
+    "typographyMeta": {
+      "number": { "displayName": "Tabular measured value", "purpose": "Equal-weight score and XP columns." },
+      "status": { "displayName": "Menu measurement", "purpose": "Exact font shared by the status item and width calculation." }
+    },
+    "shadows": [],
+    "motion": [
+      { "name": "menu-live-wpm", "value": "2.2s finite lease; fresh snapshots at most 1Hz; 0.65–2.6 cycles/s; requested 15–30 FPS, preferred 30", "purpose": "At every level, current WPM drives an icon-masked sweep, two cadence cuts and two sparks across the standard 20–120 WPM range. Six Core Animation layers, removed on expiry or lifecycle cancellation." },
+      { "name": "menu-preview", "value": "30, 70, 120 WPM; 2s per sample; 6s total", "purpose": "Explicit labeled demonstration on the actual menu icon at every level; unlocked responsive icons show slow, steady and peak pattern transitions. Never changes menu text, typing records, history or XP. Visibility, permission, accessibility and power gates still apply." },
+      { "name": "settlement-number", "value": "easeOut 1.15s", "purpose": "Finite awarded-XP interpolation with fixed layout." },
+      { "name": "settlement-burst", "value": "easeOut 2.4s", "purpose": "Standard ten vector streaks/twinkles and two rings at every level; removed after the sequence." },
+      { "name": "settlement-medal", "value": "spring response 0.4s, damping 0.65; return easeOut 0.9s", "purpose": "One level-gain response, disabled by Reduce Motion or low power." }
+    ],
+    "breakpoints": [
+      { "name": "appearance-gallery-column", "value": "180pt minimum adaptive column" },
+      { "name": "activity-column", "value": "980pt maximum" },
+      { "name": "appearance-column", "value": "940pt maximum" }
+    ],
+    "native": {
+      "platform": "macOS 13+ AppKit and SwiftUI",
+      "source": "Sources/Keytempo/AppearanceArtwork.swift",
+      "motionSource": "Sources/Keytempo/MenuIconEffects.swift",
+      "cosmeticCatalog": "Nine themes and eight menu icons across 16 roadmap milestones; only themes and icons unlock",
+      "menuCache": "At most 20 template NSImages: five fixed styles plus three responsive styles with five WPM states each. Level never changes detail; macOS supplies the system foreground color",
+      "menuPatternStates": "Rhythm, Ripple and Comet use idle for absent/nonfinite/nonpositive WPM, slow below 40, steady 40..<80, fast 80..<120 and peak at 120 or above. Existing aggregate snapshots change static templates even with the motion switch off, Reduce Motion or low power; no continuous animation is added.",
+      "menuMotion": "Saved user toggle; fresh active aggregated snapshots renew finite Core Animation leases without a display link, per-key renderer or added ongoing timer. Lifecycle suppression requires a new idle-to-typing segment.",
+      "typographyStyles": { "body": "SwiftUI .body or native default", "caption": "SwiftUI .caption; point size is resolved by the platform" },
+      "filledControls": "AppAppearanceStyle.filledControlTint uses the deeper light-appearance accent for selected segments and prominent buttons in both appearances. White-label contrast is checked across all nine themes at 4.5:1 minimum; text and artwork retain their separate bright dark-mode accents.",
+      "accessibility": "Semantic text, decorative vectors hidden, Reduce Motion, Increase Contrast and native keyboard controls",
+      "systemColors": ["NSColor.windowBackgroundColor", "NSColor.controlBackgroundColor", "SwiftUI primary", "SwiftUI secondary"]
+    }
+  },
+  "components": [
+    { "name": "Theme choice", "kind": "custom", "refersTo": "theme-choice", "description": "Native button with real theme linework, visible name, unlock level, disabled state and a checkmark selection." },
+    { "name": "Rank seal", "kind": "custom", "description": "Native Canvas facets, inset hexagon and six radial cuts with an SF Symbol; identical detail at every level and decorative only." },
+    { "name": "Score and XP ledger", "kind": "custom", "refersTo": "reward-ledger", "description": "Two factual columns on one opaque native surface, separated by a thin rule." },
+    { "name": "Settlement panel", "kind": "custom", "description": "Immutable committed receipt retained through menu-popover handoff. Loading remains closable with Close/Escape; read errors offer Retry and Close." },
+    { "name": "Menu icon", "kind": "custom", "refersTo": "menu-icon", "description": "Eight authored 18-point template silhouettes in native system color: five fixed drawings and Rhythm/Ripple/Comet with five WPM-dependent patterns. Their unlock levels are 15/45/70; detail follows speed independently of level." },
+    { "name": "Menu motion controls", "kind": "custom", "description": "Native saved toggle and a finite labeled 30/70/120 WPM preview at every level, subject to system accessibility and power restrictions. Selected responsive icons also show three static examples under Reduce Motion or low power." }
+  ],
+  "narrative": {
+    "northStar": "Engraved Spectra",
+    "overview": "Keytempo is a small native instrument that earns visual choices through use. Its numbers and controls stay quiet and familiar; authored linework, faceted seals and compact menu icons carry the personality. The nine themes have distinct geometry, not just different accent colors.\n\nThe app is used throughout the day in the macOS menu bar. It follows the user's system appearance or explicit light/dark choice. SwiftUI semantic foregrounds and native AppKit controls remain the foundation.",
+    "keyCharacteristics": ["Crisp geometric vector theme artwork, with no raster theme assets or decorative blur.", "Tabular numerals, factual labels and compact native controls.", "Cosmetic progression unlocks nine themes and eight menu icons; standard motion is available at every level.", "Speed-responsive menu motion in finite leases and bounded committed settlements; static theme art."],
+    "rules": [{ "name": "The Quiet Field Rule", "body": "Data rests on neutral or gently tinted opaque surfaces. Rich multi-color linework belongs to the rank, header, theme chooser and settlement composition.", "section": "colors" }],
+    "dos": ["Do keep count, rate, estimate and unavailable-state semantics unchanged.", "Do use native semantic text colors and hide decorative vectors from accessibility.", "Do let each theme's geometry carry its distinction in both light and dark appearances.", "Do cache fixed icons by style and responsive icons by their five speed states; let macOS supply the system foreground color."],
+    "donts": ["Don't add a background animation clock, unbounded animation, random particle field or decorative blur.", "Don't animate text reflow or change measurements to make the UI more dramatic.", "Don't turn the data screens into stacks of decorative tiles."]
+  }
+}

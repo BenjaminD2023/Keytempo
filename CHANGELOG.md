@@ -19,12 +19,39 @@ The project changed its public version convention before the `0.3.0` release. Hi
 | 0.4.1 | 0.4.1 / `v0.4.1` | 17 | Accumulating score, independent XP, exact levels and personal improvement |
 | 0.5.0-beta | 0.5.0-beta / `v0.5.0-beta` | 19 | Prerelease: daily score, deferred XP settlement and refreshed rewards UI |
 | 0.5.0-rc | 0.5.0-rc / `v0.5.0-rc` | 20 | Release candidate: levels/appearance page and current-policy-only reward UI |
+| 0.5.0 | 0.5.0 / `v0.5.0` | 21 | Stable: daily score, deferred settlement, themes and speed-responsive icons |
 
 Already published signed archives, source tags and download URLs retain their original `1.x` identifiers. Their changelog labels are normalized; their embedded app versions have not been rewritten. New releases use `0.x` app versions and tags. The internal build number continues increasing, so Sparkle can offer `0.3.0` (build 11) to apps displaying `1.2.0` (build 9) or `1.2.1` (build 10).
 
 ## [Unreleased]
 
-No changes yet.
+## [0.5.0] - 2026-10-25
+
+First stable 0.5 release, internal build 21.
+
+### Added
+
+- Add daily Typing Score based on estimated speed, consistency and measured practice, shown separately from pending and settled XP.
+- Settle completed days after display sleep, system sleep or shutdown, then present committed receipts in order on the next menu or app opening. Skipping presentations never changes earnings.
+- Add Levels & Appearance with exact XP progress, a 16-milestone roadmap, nine distinct vector themes and eight menu icons. Refresh the menu, Activity and settlement views.
+- Add Rhythm, Ripple and Comet icons at Levels 15, 45 and 70. Their monochrome patterns change with current WPM, including with Reduce Motion or low power.
+- Add speed-responsive menu animation at every level, with an off switch and a six-second 30/70/120 WPM preview. Animations stop when input pauses or visibility, accessibility or power settings require it.
+
+### Changed
+
+- Convert each final daily score to ordinary XP one for one, plus 750 XP for each newly verified personal-improvement milestone. Scale legacy XP and level thresholds equally by 150 to preserve levels and proportional progress.
+- Limit cosmetic upgrades to themes and icons. Use standard menu and settlement animations at every level, with feedback for actual level gains.
+
+### Removed
+
+- Remove menu color customization and separate effect unlocks. Menu icons and text use the native macOS system foreground color.
+- Replace legacy reward charts and export controls with current daily history, settlement receipts and improvement calibration.
+
+### Fixed
+
+- Fix daily settlements getting stuck on a loading spinner when opened from the menu bar. Loading panels remain dismissible, and read errors offer a retry.
+- Keep menu bar counts and rates visible without excess side spacing.
+- Improve selected controls and button readability in dark themes. Keep interrupted settlement animations static after sleep, Reduce Motion or low-power changes.
 
 ## [0.5.0-rc] - 2026-10-24
 
@@ -239,7 +266,8 @@ Originally local `1.1.0` builds; no separate public release archive was publishe
 - Separate global estimates from a real confirmed editor adapter, with adaptive segment timing and local aggregate storage.
 - Establish core, persistence and application integration tests and document the limits of real-world input and resource validation.
 
-[Unreleased]: https://github.com/BenjaminD2023/Keytempo/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/BenjaminD2023/Keytempo/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/BenjaminD2023/Keytempo/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/BenjaminD2023/Keytempo/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/BenjaminD2023/Keytempo/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/BenjaminD2023/Keytempo/compare/v0.3.1...v0.3.2

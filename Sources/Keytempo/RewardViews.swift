@@ -26,26 +26,35 @@ enum RewardAccent: Equatable {
 
 struct RewardMenuSummary: View {
     @ObservedObject var model: AppModel
+    @Environment(\.colorScheme) private var scheme
     var body: some View {
         if let state = model.dailyRewardState, let level = DailyLevelProgress(totalXP: state.totalXP) {
             let today = state.days[state.currentDay]
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text(L("今日练习积分")).foregroundStyle(.secondary)
-                    Spacer()
-                    Text(dailyScoreText(today?.score)).fontWeight(.medium)
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .top, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(L("今日练习积分")).font(.caption).foregroundStyle(.secondary)
+                        Text(dailyScoreText(today?.score)).font(.system(size: 24, weight: .semibold))
+                            .foregroundStyle(RewardAccent.score.color(for: scheme)).lineLimit(1).minimumScaleFactor(0.7)
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                    Divider().frame(height: 42)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(L("预计结算 XP")).font(.caption).foregroundStyle(.secondary)
+                        Text(today?.score.map { "+" + $0.formatted() } ?? "—").font(.system(size: 24, weight: .semibold))
+                            .foregroundStyle(RewardAccent.xp.color(for: scheme)).lineLimit(1).minimumScaleFactor(0.7)
+                    }.frame(maxWidth: .infinity, alignment: .leading)
                 }
-                HStack {
-                    Text(L("预计结算 XP")).foregroundStyle(.secondary)
-                    Spacer()
-                    Text(today?.score.map { "+" + $0.formatted() } ?? "—")
-                }
-                HStack {
-                    Text(L("等级 %@", level.level.formatted()))
-                    Spacer()
-                    Text(L("累计 %@ XP", state.totalXP.formatted()))
-                }.font(.caption).foregroundStyle(.secondary)
-            }.font(.callout).monospacedDigit()
+                Divider()
+                Button(action: model.showAppearance) {
+                    HStack(spacing: 6) {
+                        Text(L("等级 %@", level.level.formatted())).fontWeight(.medium)
+                        Spacer(minLength: 8)
+                        Text(L("累计 %@ XP", state.totalXP.formatted())).foregroundStyle(.secondary)
+                        Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold)).foregroundStyle(.secondary)
+                    }.font(.caption).contentShape(Rectangle())
+                }.buttonStyle(.plain).help(L("等级与外观…"))
+            }.monospacedDigit().padding(13)
+                .background(Color(nsColor: .controlBackgroundColor).opacity(0.7), in: RoundedRectangle(cornerRadius: 12))
         }
     }
 }
@@ -70,7 +79,7 @@ struct RewardDashboard: View {
                 Label(L(error), systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.orange)
             }
             if model.dailyRewardState != nil {
-                HStack(alignment: .top, spacing: 16) {
+                HStack(alignment: .top, spacing: 0) {
                     RewardCard(title: L("练习积分"), status: scoreStatus, symbol: "waveform.path", accent: .score) {
                         largeValue(dailyScoreText(selected?.score), accent: .score)
                         Spacer(minLength: 5)
@@ -79,6 +88,7 @@ struct RewardDashboard: View {
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }
+                    Rectangle().fill(Color.primary.opacity(0.09)).frame(width: 1).padding(.vertical, 20)
                     RewardCard(title: receipt == nil ? L("预计结算 XP") : L("获得 XP"),
                                status: receipt == nil ? L("待入账") : L("已入账"), symbol: "sparkles", accent: .xp) {
                         largeValue(xpText, accent: .xp)
@@ -86,6 +96,7 @@ struct RewardDashboard: View {
                         xpExplanation
                     }
                 }.fixedSize(horizontal: false, vertical: true)
+                    .background(Color(nsColor: .controlBackgroundColor).opacity(0.78), in: RoundedRectangle(cornerRadius: 14))
             } else {
                 Text(L("奖励暂不可用，请检查本地存储状态。")).font(.callout).foregroundStyle(.secondary)
             }
@@ -110,7 +121,7 @@ struct RewardDashboard: View {
         }
     }
     private func largeValue(_ value: String, accent: RewardAccent) -> some View {
-        Text(value).font(.system(size: accent == .score ? 50 : 43, weight: .semibold)).monospacedDigit()
+        Text(value).font(.system(size: 46, weight: .semibold)).monospacedDigit()
             .foregroundStyle(accent.color(for: colorScheme)).lineLimit(1).minimumScaleFactor(0.5)
             .frame(maxWidth: .infinity, alignment: .leading).padding(.top, 2)
     }
@@ -139,12 +150,7 @@ private struct RewardCard<Content: View>: View {
             content
         }
         .padding(20)
-        .frame(maxWidth: .infinity, minHeight: 205, maxHeight: .infinity, alignment: .topLeading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
-        .overlay {
-            RoundedRectangle(cornerRadius: 14).strokeBorder(tint.opacity(contrast == .increased ? 0.7 : accent == .xp ? 0.24 : 0.18), lineWidth: 1)
-                .allowsHitTesting(false)
-        }
+        .frame(maxWidth: .infinity, minHeight: 190, maxHeight: .infinity, alignment: .topLeading)
     }
 }
 
@@ -175,10 +181,7 @@ struct RewardDetails: View {
     }
     private func lifetime(_ total: Int, level: DailyLevelProgress) -> some View {
         HStack(spacing: 14) {
-            Image(systemName: level.level >= 60 ? "sparkle" : level.level >= 20 ? "diamond" : "circle.hexagongrid")
-                .font(.system(size: 25, weight: .light)).foregroundStyle(RewardAccent.xp.color(for: colorScheme))
-                .frame(width: 46, height: 46).background(RewardAccent.xp.color(for: colorScheme).opacity(0.08), in: RoundedRectangle(cornerRadius: 13))
-                .accessibilityHidden(true)
+            RankSeal(theme: AppAppearanceStyle.rankTheme(level: level.level), level: level.level, size: 52)
             Text(L("等级 %@", level.level.formatted())).font(.callout.weight(.semibold))
             VStack(alignment: .leading, spacing: 7) {
                 HStack {
@@ -186,9 +189,7 @@ struct RewardDetails: View {
                     Spacer(minLength: 8)
                     Text(L("还需 %@ XP", level.remainingXP.formatted()))
                 }.font(.caption).foregroundStyle(.secondary).monospacedDigit()
-                ProgressView(value: Double(level.progressXP), total: Double(level.requiredXP))
-                    .tint(RewardAccent.xp.color(for: colorScheme)).accessibilityLabel(L("下一等级进度"))
-                    .accessibilityValue(L("%@ / %@ XP", level.progressXP.formatted(), level.requiredXP.formatted()))
+                LevelProgressTrack(value: Double(level.progressXP) / Double(level.requiredXP), theme: model.effectiveAppearanceTheme)
                 Text(L("%@ / %@ XP", level.progressXP.formatted(), level.requiredXP.formatted())).font(.caption).foregroundStyle(.secondary).monospacedDigit()
             }
         }.padding(.vertical, 9)

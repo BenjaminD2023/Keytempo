@@ -55,11 +55,29 @@ private struct StatusLine: View {
 
 struct MenuContent: View {
     @ObservedObject var model: AppModel
+    @Environment(\.colorScheme) private var scheme
+    private var level: Int { model.dailyRewardState.flatMap { DailyLevelProgress(totalXP: $0.totalXP) }?.level ?? 1 }
+    private var theme: String { model.effectiveAppearanceTheme }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label("Keytempo", systemImage: "keyboard").font(.headline)
-            StatusLine(model: model)
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 7) {
+                    Text("Keytempo").font(.system(size: 19, weight: .semibold))
+                    StatusLine(model: model)
+                }
+                Spacer(minLength: 12)
+                Button(action: model.showAppearance) {
+                    RankSeal(theme: AppAppearanceStyle.rankTheme(level: level), level: level, size: 56)
+                }.buttonStyle(.plain)
+                    .accessibilityLabel(L("等级 %@ · 等级与外观", level.formatted()))
+                    .help(L("等级 %@ · 等级与外观", level.formatted()))
+            }
+            .background(alignment: .trailing) {
+                ThemeArtwork(theme: theme).frame(width: 170, height: 76)
+                    .mask(LinearGradient(colors: [.clear, .black], startPoint: .leading, endPoint: .trailing))
+            }
+            Divider()
             recentAverage
             currentSpeed
             Divider()
@@ -101,7 +119,6 @@ struct MenuContent: View {
                 }
             }
             RewardMenuSummary(model: model)
-            Button(L("等级与外观…"), action: model.showAppearance).font(.callout)
             if let error = model.storageError {
                 VStack(alignment: .leading, spacing: 6) {
                     Label(L(error), systemImage: "exclamationmark.triangle")
@@ -142,7 +159,7 @@ struct MenuContent: View {
                 Text(L("近 10 分钟平均")).font(.callout.weight(.semibold))
                 Spacer(minLength: 8)
                 Text(primaryCadence(model.tenMinuteWPM, unit: .wpm))
-                    .font(.system(size: 28, weight: .semibold)).monospacedDigit()
+                    .font(.system(size: 29, weight: .semibold)).monospacedDigit()
                     .lineLimit(1).minimumScaleFactor(0.8).layoutPriority(1)
             }
             .help(L("近 10 分钟只使用本次统计中已记录的全语言输入间隔，按实际段内时长加权，不把停顿加入分母。"))
@@ -190,21 +207,26 @@ struct MenuContent: View {
 
 struct StatisticsView: View {
     @ObservedObject var model: AppModel
+    private var level: Int { model.dailyRewardState.flatMap { DailyLevelProgress(totalXP: $0.totalXP) }?.level ?? 1 }
+    private var rank: AppearanceUnlock { AppearanceCatalog.themes.last { level >= $0.level } ?? AppearanceCatalog.themes[0] }
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(alignment: .center) {
+            HStack(alignment: .center, spacing: 14) {
+                RankSeal(theme: rank.id, level: level, size: 62)
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("Keytempo").font(.largeTitle.weight(.semibold))
-                    Text(L("记录敲键节奏，保留输入边界。"))
-                        .foregroundStyle(.secondary)
+                    Text("Keytempo").font(.system(size: 26, weight: .semibold))
+                    Text(L("等级 %@ · %@", level.formatted(), L(rank.name)))
+                        .font(.callout).foregroundStyle(.secondary).monospacedDigit()
                 }
-                Spacer()
+                ThemeArtwork(theme: model.effectiveAppearanceTheme)
+                    .frame(maxWidth: .infinity).frame(height: 78)
+                    .padding(.horizontal, 12)
                 VStack(alignment: .trailing, spacing: 7) {
                     StatusLine(model: model).fixedSize()
                     Button(model.isPaused ? L("恢复统计") : L("暂停统计"), action: model.togglePause)
                 }
-            }.padding(24)
+            }.padding(.horizontal, 24).padding(.vertical, 17)
 
             Picker(L("统计页面"), selection: $model.statisticsPage) {
                 Text(L("今日概况")).tag("today")
@@ -216,6 +238,7 @@ struct StatisticsView: View {
                 if model.diagnosticsEnabled { Text(L("诊断")).tag("diagnostics") }
             }
             .pickerStyle(.segmented)
+            .tint(AppAppearanceStyle.filledControlTint(theme: model.effectiveAppearanceTheme))
             .labelsHidden()
             .padding(.horizontal, 24)
             .padding(.bottom, 20)

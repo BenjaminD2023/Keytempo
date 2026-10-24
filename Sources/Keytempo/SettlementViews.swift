@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import TypingCore
 
@@ -27,18 +28,11 @@ struct SettlementPresentation: Identifiable, Equatable {
     var before: DailyLevelProgress? { DailyLevelProgress(totalXP: totalXPBefore) }
     var after: DailyLevelProgress? { DailyLevelProgress(totalXP: totalXPAfter) }
     var levelsGained: Int { max(0, (after?.level ?? 1) - (before?.level ?? 1)) }
-    var tier: Int {
-        let level = after?.level ?? 1
-        return level >= 58 ? 60 : level >= 18 ? 20 : 1
-    }
-    var newlyUnlockedTier: Bool {
-        let prior = before?.level ?? 1, next = after?.level ?? 1
-        return (prior < 18 && next >= 18) || (prior < 58 && next >= 58)
-    }
 }
 
 struct SettlementView: View {
     let presentation: SettlementPresentation
+    var theme: String = "classic"
     let position: Int
     let count: Int
     let onNext: () -> Void
@@ -47,7 +41,6 @@ struct SettlementView: View {
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @SettlementViewState private var displayedXP = 0.0
     @SettlementViewState private var burst = 0.0
     @SettlementViewState private var medalScale = 1.0
@@ -55,11 +48,11 @@ struct SettlementView: View {
     @SettlementViewState private var progress = 0.0
     @SettlementViewState private var effectsVisible = false
     @SettlementViewState private var levelVisible = false
+    @SettlementViewState private var motionFinished = false
 
     private var gold: Color { colorScheme == .dark ? Color(red: 0.95, green: 0.79, blue: 0.46) : Color(red: 0.58, green: 0.37, blue: 0.07) }
     private var teal: Color { colorScheme == .dark ? Color(red: 0.48, green: 0.88, blue: 0.79) : Color(red: 0.04, green: 0.42, blue: 0.39) }
-    private var tierSymbol: String { presentation.tier >= 60 ? "sparkle" : presentation.tier >= 20 ? "diamond" : "circle.hexagongrid" }
-    private var tierName: String { L(presentation.tier >= 60 ? "星辉" : presentation.tier >= 20 ? "棱光" : "基础") }
+    private var animationsAllowed: Bool { !reduceMotion && !ProcessInfo.processInfo.isLowPowerModeEnabled }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -74,42 +67,43 @@ struct SettlementView: View {
                     .keyboardShortcut(.cancelAction)
             }.padding(.horizontal, 26).padding(.top, 20)
 
-            VStack(spacing: 16) {
+            VStack(spacing: 14) {
                 ZStack {
-                    if effectsVisible && !reduceMotion && presentation.tier >= 20 {
-                        SettlementParticles(progress: burst, count: presentation.tier >= 60 ? 28 : 10, gold: gold, teal: teal)
-                            .frame(width: 300, height: 220).allowsHitTesting(false).accessibilityHidden(true)
+                    ThemeArtwork(theme: theme).frame(width: 390, height: 164)
+                        .mask(LinearGradient(colors: [.clear, .black, .clear], startPoint: .leading, endPoint: .trailing))
+                    if effectsVisible && animationsAllowed {
+                        SettlementParticles(progress: burst, gold: gold, teal: teal)
+                            .frame(width: 360, height: 190).allowsHitTesting(false).accessibilityHidden(true)
                     }
                     medal
                         .scaleEffect(medalScale)
                         .rotationEffect(.degrees(medalRotation))
-                }.frame(height: 116).padding(.top, 11)
-                if levelVisible && presentation.levelsGained > 0 {
-                    Text(L("等级 %@", (presentation.after?.level ?? 1).formatted()))
-                        .font(.title2.weight(.semibold)).foregroundStyle(gold)
-                        .transition(.opacity.combined(with: .scale(scale: 0.94)))
-                }
-                HStack(alignment: .firstTextBaseline, spacing: 9) {
-                    Text(L("练习积分")).font(.callout).foregroundStyle(.secondary)
-                    Text(presentation.score.map { $0.formatted() } ?? "—")
-                        .font(.system(size: 28, weight: .semibold)).monospacedDigit().foregroundStyle(teal)
-                        .lineLimit(1).minimumScaleFactor(0.65)
-                }.accessibilityElement(children: .combine)
+                }.frame(height: 134).padding(.top, 8)
+                Text(L("等级 %@", (presentation.after?.level ?? 1).formatted()))
+                    .font(.title2.weight(.semibold)).foregroundStyle(gold)
+                    .opacity(presentation.levelsGained == 0 || levelVisible ? 1 : 0)
+                    .accessibilityHidden(presentation.levelsGained > 0 && !levelVisible)
 
-                VStack(spacing: 7) {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                HStack(alignment: .top, spacing: 22) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(L("练习积分")).font(.callout).foregroundStyle(.secondary)
+                        Text(presentation.score.map { $0.formatted() } ?? "—")
+                            .font(.system(size: 38, weight: .semibold)).monospacedDigit().foregroundStyle(teal)
+                            .lineLimit(1).minimumScaleFactor(0.5)
+                    }.frame(maxWidth: .infinity, alignment: .leading).accessibilityElement(children: .combine)
+                    Divider().frame(height: 65)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(L("获得 XP")).font(.callout).foregroundStyle(.secondary)
                         SettlementXPNumber(value: displayedXP)
-                            .font(.system(size: 54, weight: .semibold)).monospacedDigit()
-                            .lineLimit(1).minimumScaleFactor(0.6).accessibilityHidden(true)
-                        Text("XP").font(.title3.weight(.medium))
-                    }.foregroundStyle(gold)
-                        .accessibilityElement(children: .ignore)
-                        .accessibilityLabel(L("获得 %@ XP", presentation.totalXP.formatted()))
-                    HStack(spacing: 16) {
-                        Text(L("当日分数 +%@", presentation.ordinaryXP.formatted()))
-                        if presentation.improvementXP > 0 { Text(L("进步验证 +%@", presentation.improvementXP.formatted())).foregroundStyle(teal) }
-                    }.font(.caption).foregroundStyle(.secondary).monospacedDigit()
-                }.padding(.top, 7)
+                            .font(.system(size: 38, weight: .semibold)).monospacedDigit().foregroundStyle(gold)
+                            .lineLimit(1).minimumScaleFactor(0.5).accessibilityHidden(true)
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityElement(children: .ignore).accessibilityLabel(L("获得 %@ XP", presentation.totalXP.formatted()))
+                }.padding(.top, 3)
+                HStack(spacing: 16) {
+                    Text(L("当日分数 +%@", presentation.ordinaryXP.formatted()))
+                    if presentation.improvementXP > 0 { Text(L("进步验证 +%@", presentation.improvementXP.formatted())).foregroundStyle(teal) }
+                }.font(.caption).foregroundStyle(.secondary).monospacedDigit()
 
                 levelSummary.padding(.top, 14)
                 Spacer(minLength: 0)
@@ -122,29 +116,23 @@ struct SettlementView: View {
                 Spacer()
                 Button(L("跳过这份"), action: onNext)
                 Button(position < count ? L("下一份") : L("完成"), action: onNext)
-                    .buttonStyle(.borderedProminent).tint(teal)
+                    .buttonStyle(.borderedProminent).tint(AppAppearanceStyle.filledControlTint(theme: "classic"))
                     .keyboardShortcut(.defaultAction)
             }.padding(20)
         }
         .frame(width: 460, height: 560)
-        .background {
-            if reduceTransparency { Color(nsColor: .windowBackgroundColor) }
-            else { Rectangle().fill(.regularMaterial) }
-        }
+        .background(AppAppearanceStyle.canvas(theme: theme, scheme: colorScheme))
         .task(id: presentation.id) { await play() }
-        .onDisappear { effectsVisible = false }
+        .onDisappear { finishMotion() }
+        .onChange(of: reduceMotion) { if $0 { finishMotion() } }
+        .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)) { _ in
+            if ProcessInfo.processInfo.isLowPowerModeEnabled { finishMotion() }
+        }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.willSleepNotification)) { _ in finishMotion() }
     }
 
     private var medal: some View {
-        ZStack {
-            Circle().fill(LinearGradient(colors: [gold.opacity(0.15), Color(nsColor: .windowBackgroundColor)], startPoint: .topLeading, endPoint: .bottomTrailing))
-            Circle().strokeBorder(gold.opacity(presentation.tier >= 20 ? 0.50 : 0.25), lineWidth: 1)
-            Circle().inset(by: 7).fill(gold.opacity(presentation.tier >= 20 ? 0.10 : 0.04))
-            Circle().inset(by: 7).strokeBorder(gold.opacity(0.24), lineWidth: 1)
-            Image(systemName: tierSymbol).font(.system(size: 29, weight: .light)).foregroundStyle(gold)
-        }.frame(width: 78, height: 78)
-            .shadow(color: .black.opacity(colorScheme == .dark ? 0.15 : 0.06), radius: 9, x: 0, y: 6)
-            .accessibilityHidden(true)
+        RankSeal(theme: theme, level: presentation.after?.level ?? 1, size: 110)
     }
 
     private var levelSummary: some View {
@@ -160,16 +148,8 @@ struct SettlementView: View {
                 Text(L("%@ → %@ XP", presentation.totalXPBefore.formatted(), presentation.totalXPAfter.formatted()))
                     .font(.caption).foregroundStyle(.secondary).monospacedDigit()
             }.font(.callout)
-            GeometryReader { geometry in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Color.primary.opacity(0.08))
-                    Capsule().fill(gold).frame(width: max(0, min(geometry.size.width, geometry.size.width * progress)))
-                }
-            }.frame(height: 5).accessibilityHidden(true)
-            if presentation.newlyUnlockedTier {
-                Label(L("%@ · 已解锁", tierName), systemImage: "sparkles")
-                    .font(.caption).foregroundStyle(gold).frame(maxWidth: .infinity).padding(.top, 3)
-            } else if presentation.improvementXP > 0 {
+            LevelProgressTrack(value: progress, theme: theme)
+            if presentation.improvementXP > 0 {
                 Label(L("日均进步 · 已验证"), systemImage: "arrow.up.right")
                     .font(.caption).foregroundStyle(teal).frame(maxWidth: .infinity).padding(.top, 3)
             }
@@ -178,31 +158,46 @@ struct SettlementView: View {
 
     @MainActor private func play() async {
         let finalProgress = presentation.after.map { Double($0.progressXP) / Double($0.requiredXP) } ?? 0
-        displayedXP = reduceMotion ? Double(presentation.totalXP) : 0
-        levelVisible = reduceMotion
+        motionFinished = false
+        displayedXP = animationsAllowed ? 0 : Double(presentation.totalXP)
+        levelVisible = !animationsAllowed
         progress = presentation.before.map { Double($0.progressXP) / Double($0.requiredXP) } ?? 0
-        medalScale = 1; medalRotation = 0; burst = 0; effectsVisible = !reduceMotion && presentation.tier >= 20
-        guard !reduceMotion else { progress = finalProgress; return }
+        medalScale = 1; medalRotation = 0; burst = 0; effectsVisible = animationsAllowed
+        guard animationsAllowed else { progress = finalProgress; return }
         withAnimation(.easeOut(duration: 1.15)) { displayedXP = Double(presentation.totalXP) }
         withAnimation(.easeOut(duration: 2.4)) { burst = 1 }
         withAnimation(.easeOut(duration: 0.9)) { progress = presentation.levelsGained > 0 ? 1 : finalProgress }
         do {
             try await Task.sleep(for: .milliseconds(1_200))
             try Task.checkCancellation()
+            guard !motionFinished && animationsAllowed else { finishMotion(); return }
             if presentation.levelsGained > 0 {
                 withAnimation(.spring(response: 0.4, dampingFraction: 0.65)) { levelVisible = true; medalScale = 1.12; medalRotation = -5 }
                 progress = 0
                 try await Task.sleep(for: .milliseconds(120))
                 try Task.checkCancellation()
+                guard !motionFinished && animationsAllowed else { finishMotion(); return }
                 withAnimation(.easeOut(duration: 0.9)) { progress = finalProgress; medalScale = 1; medalRotation = 0 }
             }
             try await Task.sleep(for: .milliseconds(2_400))
             try Task.checkCancellation()
+            guard !motionFinished && animationsAllowed else { finishMotion(); return }
             effectsVisible = false
             try await Task.sleep(for: .milliseconds(presentation.levelsGained > 0 ? 2_500 : 1_900))
             try Task.checkCancellation()
+            guard !motionFinished && animationsAllowed else { finishMotion(); return }
             onNext()
         } catch { return }
+    }
+
+    @MainActor private func finishMotion() {
+        var transaction = Transaction(); transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            motionFinished = true
+            effectsVisible = false; displayedXP = Double(presentation.totalXP); levelVisible = true
+            medalScale = 1; medalRotation = 0; burst = 1
+            progress = presentation.after.map { Double($0.progressXP) / Double($0.requiredXP) } ?? 0
+        }
     }
 }
 
@@ -213,23 +208,39 @@ private struct SettlementXPNumber: View, Animatable {
 }
 
 /// Finite, view-local particles. There is no display link or idle timer; the
-/// parent removes this layer after its one animation and on dismissal.
+/// parent removes this layer after its one animation and on dismissal. Every
+/// level uses the same ten particles and two rings.
 private struct SettlementParticles: View, Animatable {
     var progress: Double
-    let count: Int
     let gold: Color
     let teal: Color
     var animatableData: Double { get { progress } set { progress = newValue } }
     var body: some View {
-        GeometryReader { geometry in
-            ForEach(0..<count, id: \.self) { index in
-                let angle = Double(index) / Double(count) * 2 * Double.pi
-                let radius = Double(68 + index % 5 * 13)
-                Circle().fill(index.isMultiple(of: 3) ? teal : gold)
-                    .frame(width: index.isMultiple(of: 4) ? 3 : 2, height: index.isMultiple(of: 4) ? 3 : 2)
-                    .opacity(max(0, sin(progress * .pi)) * 0.8)
-                    .position(x: geometry.size.width / 2 + cos(angle) * radius * progress,
-                              y: geometry.size.height / 2 + sin(angle) * radius * progress)
+        Canvas { context, size in
+            let t = min(1, max(0, progress))
+            let opacity = max(0, sin(t * .pi))
+            let center = CGPoint(x: size.width / 2, y: size.height / 2)
+            let count = 10
+            for index in 0..<count {
+                let angle = Double(index) / Double(count) * 2 * Double.pi + Double(index % 3) * 0.1
+                let radius = Double(60 + index % 5 * 18) * (0.35 + t * 0.65)
+                let x = center.x + cos(angle) * radius, y = center.y + sin(angle) * radius * 0.64
+                let color = index.isMultiple(of: 3) ? teal : gold
+                var p = Path()
+                if index.isMultiple(of: 3) {
+                    let r = (index.isMultiple(of: 2) ? 4.0 : 2.8) * sin(t * .pi)
+                    p.move(to: CGPoint(x: x - r, y: y)); p.addLine(to: CGPoint(x: x + r, y: y))
+                    p.move(to: CGPoint(x: x, y: y - r)); p.addLine(to: CGPoint(x: x, y: y + r))
+                } else {
+                    let length = (1 - t) * 10 + 2
+                    p.move(to: CGPoint(x: x, y: y))
+                    p.addLine(to: CGPoint(x: x + cos(angle) * length, y: y + sin(angle) * length * 0.64))
+                }
+                context.stroke(p, with: .color(color.opacity(opacity * 0.9)), style: StrokeStyle(lineWidth: index.isMultiple(of: 4) ? 1.7 : 0.9, lineCap: .round))
+            }
+            for ring in 0..<2 {
+                let radius = (40 + t * 65 + Double(ring) * 14)
+                context.stroke(Path(ellipseIn: CGRect(x: center.x - radius, y: center.y - radius * 0.5, width: radius * 2, height: radius)), with: .color((ring == 0 ? gold : teal).opacity(opacity * 0.25)), lineWidth: 0.65)
             }
         }.clipped()
     }

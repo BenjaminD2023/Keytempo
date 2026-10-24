@@ -57,6 +57,8 @@ private struct ActivityApp: Identifiable {
 struct ActivityView: View {
     @ObservedObject var model: AppModel
     @ActivityViewState private var confirmClearApps = false
+    @Environment(\.colorScheme) private var scheme
+    private var tint: Color { AppAppearanceStyle.accent(theme: model.effectiveAppearanceTheme, scheme: scheme) }
 
     private var combinedRows: [HourlyActivity] { model.activityHourly.filter { $0.applicationID.isEmpty } }
     private var totals: RhythmTotals { mergedActivity(combinedRows) }
@@ -116,7 +118,7 @@ struct ActivityView: View {
                     Text(L("最早活动记录：%@", since.formatted(date: .abbreviated, time: .omitted)))
                         .font(.caption).foregroundStyle(.secondary)
                 }
-            }.padding(24)
+            }.padding(24).frame(maxWidth: 980, alignment: .leading).frame(maxWidth: .infinity)
         }
         .onAppear { model.activityVisible = true; model.loadActivity(day: model.activityDate) }
         .onDisappear { model.releaseActivity() }
@@ -165,8 +167,8 @@ struct ActivityView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
-        .padding(18)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.65), in: RoundedRectangle(cornerRadius: 12))
+        .padding(.vertical, 8)
+        .padding(.horizontal, 2)
     }
 
     private var hourlyTimeline: some View {
@@ -178,7 +180,7 @@ struct ActivityView: View {
                 Chart(hours) { hour in
                     RectangleMark(xStart: .value(L("小时"), hour.start), xEnd: .value(L("小时"), hour.end),
                                   yStart: .value(L("敲键数量"), 0), yEnd: .value(L("敲键数量"), hour.totals.keys))
-                        .foregroundStyle(Color.orange)
+                        .foregroundStyle(tint.gradient)
                 }
                 .chartXScale(domain: selectedDayRange)
                 .chartXAxis { AxisMarks(values: .stride(by: .hour, count: 3)) }

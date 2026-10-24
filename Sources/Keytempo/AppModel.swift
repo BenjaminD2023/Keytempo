@@ -265,20 +265,15 @@ struct HistoryDay: Identifiable {
     @Published private(set) var appearanceMode = "system"
     @Published private(set) var appearanceTheme = "classic"
     @Published private(set) var menuBarStyle = "keyboard"
-    @Published private(set) var menuColorMode = "system"
-    @Published private(set) var menuCustomGradientEnabled = false
-    @Published private(set) var menuLowColorHex = "146B63"
-    @Published private(set) var menuHighColorHex = "945F12"
-    @Published private(set) var menuGradientLowWPM = 20.0
-    @Published private(set) var menuGradientHighWPM = 120.0
-    var effectiveMenuCustomGradientEnabled: Bool { menuCustomGradientEnabled && appearanceLevel >= AppearanceCatalog.customGradientLevel }
+    @Published private(set) var menuIconMotionEnabled = true
+    @Published var menuEffectPreviewWPM: Int?
     @Published var statisticsPage = "today"
     private let appearanceStorage: UserDefaults?
     var onAppearanceUpdate: (() -> Void)?
+    var onMenuEffectPreview: (() -> Void)?
     var appearanceLevel: Int { DailyLevelProgress(totalXP: dailyRewardState?.totalXP ?? 0)?.level ?? 1 }
     var effectiveAppearanceTheme: String { AppearancePolicy.effective(appearanceTheme, choice: .theme, level: appearanceLevel) }
     var effectiveMenuBarStyle: String { AppearancePolicy.effective(menuBarStyle, choice: .icon, level: appearanceLevel) }
-    var effectiveMenuColorMode: String { AppearancePolicy.effective(menuColorMode, choice: .color, level: appearanceLevel) }
     var appearanceMenuWPM: Double? {
         guard !isPaused, hasInputPermission, !selectedSpeedIsRecent, phase != "idle" else { return nil }
         let speed = selectedMenuSpeed
@@ -286,17 +281,8 @@ struct HistoryDay: Identifiable {
         if speed.unit == "KPM" { return speed.value.map { $0 / 5 } }
         return nil
     }
-    func menuAppearanceTint(dark: Bool, increasedContrast: Bool) -> NSColor? {
-        guard !isPaused, hasInputPermission, !increasedContrast else { return nil }
-        if effectiveMenuColorMode == "speed", effectiveMenuCustomGradientEnabled, let wpm = appearanceMenuWPM,
-           let custom = AppAppearanceStyle.gradientTint(wpm: wpm, lowHex: menuLowColorHex, highHex: menuHighColorHex,
-                lowWPM: menuGradientLowWPM, highWPM: menuGradientHighWPM, dark: dark) {
-            return AppAppearanceStyle.accessibleTint(custom, dark: dark)
-        }
-        return AppAppearanceStyle.menuTint(mode: effectiveMenuColorMode, wpm: appearanceMenuWPM,
-                                           keys: dailyEstimate.keys, dark: dark)
-    }
     var onMenuUpdate: (() -> Void)?
+    private(set) var menuSnapshotUptime: TimeInterval = 0
     var onInterfaceLanguageUpdate: (() -> Void)?
     var openStats: (() -> Void)?, openSettings: (() -> Void)?
     var statisticsVisible = false
@@ -389,15 +375,7 @@ struct HistoryDay: Identifiable {
         appearanceMode = AppearancePolicy.mode(appearanceStorage?.string(forKey: "appearanceMode") ?? "system")
         appearanceTheme = appearanceStorage?.string(forKey: "appearanceTheme") ?? "classic"
         menuBarStyle = appearanceStorage?.string(forKey: "menuBarStyle") ?? "keyboard"
-        menuColorMode = appearanceStorage?.string(forKey: "menuColorMode") ?? "system"
-        menuCustomGradientEnabled = appearanceStorage?.bool(forKey: "menuCustomGradientEnabled") ?? false
-        menuLowColorHex = AppearancePolicy.hex(appearanceStorage?.string(forKey: "menuLowColorHex") ?? "") ?? "146B63"
-        menuHighColorHex = AppearancePolicy.hex(appearanceStorage?.string(forKey: "menuHighColorHex") ?? "") ?? "945F12"
-        if let low = appearanceStorage?.object(forKey: "menuGradientLowWPM") as? Double,
-           let high = appearanceStorage?.object(forKey: "menuGradientHighWPM") as? Double,
-           AppearancePolicy.validRange(low: low, high: high) {
-            menuGradientLowWPM = low; menuGradientHighWPM = high
-        }
+        menuIconMotionEnabled = appearanceStorage?.object(forKey: "menuIconMotionEnabled") as? Bool ?? true
         if let perAppTracking { perAppTrackingEnabled = perAppTracking }
         let gap = UserDefaults.standard.object(forKey: "maximumGap") as? Double ?? 3
         let filterSuspected = UserDefaults.standard.object(forKey: "suspectedInputFilteringEnabled") as? Bool ?? true
@@ -978,29 +956,14 @@ struct HistoryDay: Identifiable {
         guard AppearancePolicy.effective(value, choice: .icon, level: appearanceLevel) == value else { return }
         menuBarStyle = value; appearanceStorage?.set(value, forKey: "menuBarStyle"); onAppearanceUpdate?()
     }
-    func setMenuColorMode(_ value: String) {
-        guard AppearancePolicy.effective(value, choice: .color, level: appearanceLevel) == value else { return }
-        menuColorMode = value; appearanceStorage?.set(value, forKey: "menuColorMode"); onAppearanceUpdate?()
-    }
-    func setMenuCustomGradientEnabled(_ value: Bool) {
-        guard appearanceLevel >= AppearanceCatalog.customGradientLevel else { return }
-        menuCustomGradientEnabled = value; appearanceStorage?.set(value, forKey: "menuCustomGradientEnabled")
-        if value { setMenuColorMode("speed") }
+    func setMenuIconMotionEnabled(_ enabled: Bool) {
+        menuIconMotionEnabled = enabled
+        appearanceStorage?.set(enabled, forKey: "menuIconMotionEnabled")
         onAppearanceUpdate?()
     }
-    func setMenuLowColorHex(_ value: String) {
-        guard appearanceLevel >= AppearanceCatalog.customGradientLevel, let hex = AppearancePolicy.hex(value) else { return }
-        menuLowColorHex = hex; appearanceStorage?.set(hex, forKey: "menuLowColorHex"); onAppearanceUpdate?()
-    }
-    func setMenuHighColorHex(_ value: String) {
-        guard appearanceLevel >= AppearanceCatalog.customGradientLevel, let hex = AppearancePolicy.hex(value) else { return }
-        menuHighColorHex = hex; appearanceStorage?.set(hex, forKey: "menuHighColorHex"); onAppearanceUpdate?()
-    }
-    func setMenuGradientRange(low: Double, high: Double) {
-        guard appearanceLevel >= AppearanceCatalog.customGradientLevel, AppearancePolicy.validRange(low: low, high: high) else { return }
-        menuGradientLowWPM = low; menuGradientHighWPM = high
-        appearanceStorage?.set(low, forKey: "menuGradientLowWPM"); appearanceStorage?.set(high, forKey: "menuGradientHighWPM")
-        onAppearanceUpdate?()
+    func previewMenuEffects() {
+        guard menuIconMotionEnabled else { return }
+        onMenuEffectPreview?()
     }
     func setInterfaceLanguage(_ code: String) {
         let selected = code == "en" ? "en" : "zh-Hans"
@@ -1172,6 +1135,7 @@ struct HistoryDay: Identifiable {
         refreshSnapshot(at: ProcessInfo.processInfo.systemUptime)
     }
     fileprivate func refreshSnapshot(at now: Double) {
+        menuSnapshotUptime = now
         rewardEngine?.advance(to: Date())
         dailyRewardEngine?.advance(to: Date())
         observeDailyImprovement()
@@ -1437,7 +1401,7 @@ struct HistoryDay: Identifiable {
 }
 
 /// Isolated integration test of coordinator → core → SQLite → restart. No global capture.
-@MainActor func runAppModelChecks() -> [String] {
+@MainActor func runAppModelChecks(settlementHandoffCheck: (@MainActor (AppModel) -> [String])? = nil) -> [String] {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Keytempo-model-check-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: directory) }
     var failures: [String] = []
@@ -1514,12 +1478,12 @@ struct HistoryDay: Identifiable {
     failures += runHistoryProjectionChecks()
     failures += AppModel.runActivityIntegrationChecks()
     failures += AppModel.runRewardIntegrationChecks()
-    failures += AppModel.runDailyRewardIntegrationChecks()
+    failures += AppModel.runDailyRewardIntegrationChecks(settlementHandoffCheck: settlementHandoffCheck)
     return failures
 }
 
 private extension AppModel {
-    static func runDailyRewardIntegrationChecks() -> [String] {
+    static func runDailyRewardIntegrationChecks(settlementHandoffCheck: (@MainActor (AppModel) -> [String])?) -> [String] {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Keytempo-daily-reward-check-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: directory) }
         var failures = [String]()
@@ -1587,6 +1551,8 @@ private extension AppModel {
             expect(saved?.totalXP == score, "popup waits for the XP checkpoint to become durable")
             expect(unseen.count == 1, "popup waits for its receipt to become durable")
         } catch { failures.append("FAIL: daily reward integration durable popup: \(error.localizedDescription)") }
+
+        failures += settlementHandoffCheck?(model) ?? []
 
         // Closing before an asynchronous read completes leaves the receipt
         // unseen and must not cause a late popup or acknowledgment.

@@ -4,9 +4,17 @@ import AppKit
 /// Hybrid mode reserves the same space for both speed and idle count titles.
 enum StatusItemPresentation {
     static let font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+    static let iconWidth: CGFloat = 18
+    static let imageSpacing: CGFloat = 4
+    static let horizontalInsets: CGFloat = 8
     static func width(for title: String, mode: String) -> CGFloat {
-        let candidates = mode == "hybrid" ? [title, "⌨ ≈999 WPM", "⌨ ≈999Qi Ⅱ"] : [title]
-        return ceil(candidates.map { ($0 as NSString).size(withAttributes: [.font: font]).width }.max()! + 18)
+        let text = title.trimmingCharacters(in: .whitespaces)
+        guard !text.isEmpty else { return iconWidth + horizontalInsets }
+        // Reserve the ordinary two-digit speed, not an imaginary maximum count.
+        // Wider real values grow naturally; idle still has an explicit width.
+        let candidates = mode == "hybrid" ? [text, "≈99 WPM"] : [text]
+        let textWidth = candidates.map { ($0 as NSString).size(withAttributes: [.font: font]).width }.max() ?? 0
+        return ceil(iconWidth + imageSpacing + textWidth + horizontalInsets)
     }
 }
 
@@ -61,12 +69,18 @@ func runDisplayFormattingChecks() -> [String] {
         if actual != expected { failures.append("FAIL: compact count \(count): expected \(expected), got \(actual)") }
         if actual.filter(\.isNumber).count > 3 { failures.append("FAIL: compact count exceeds three numeric digits: \(actual)") }
     }
-    let idleWidth = StatusItemPresentation.width(for: "⌨ ≈506", mode: "hybrid")
-    let typingWidth = StatusItemPresentation.width(for: "⌨ ≈85 WPM", mode: "hybrid")
+    let idleWidth = StatusItemPresentation.width(for: "≈506", mode: "hybrid")
+    let typingWidth = StatusItemPresentation.width(for: "≈85 WPM", mode: "hybrid")
     if idleWidth != typingWidth { failures.append("FAIL: hybrid idle title must retain speed-mode width") }
-    for title in ["⌨ ≈506", "⌨ ≈999 WPM", "⌨ ≈9.22Qi Ⅱ", "⌨ — WPM", "⌨ Ⅱ"] {
+    if idleWidth > 90 || StatusItemPresentation.width(for: "≈10.1K", mode: "count") > 80 {
+        failures.append("FAIL: status item adds excessive side padding")
+    }
+    if StatusItemPresentation.width(for: "", mode: "icon") != 26 {
+        failures.append("FAIL: icon-only width must match the 18-point icon and 8-point insets")
+    }
+    for title in ["≈506", "≈999 WPM", "≈9.22Qi Ⅱ", "— WPM", "Ⅱ", "≈1000 WPM"] {
         let measured = (title as NSString).size(withAttributes: [.font: StatusItemPresentation.font]).width
-        if StatusItemPresentation.width(for: title, mode: "hybrid") < ceil(measured) + 16 {
+        if StatusItemPresentation.width(for: title, mode: "hybrid") < ceil(measured + StatusItemPresentation.iconWidth + StatusItemPresentation.imageSpacing + StatusItemPresentation.horizontalInsets) {
             failures.append("FAIL: status item clips title: \(title)")
         }
     }

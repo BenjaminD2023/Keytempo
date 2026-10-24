@@ -3,6 +3,7 @@ dist/
 .DS_Store
 *.sqlite*
 artifacts/
+.impeccable/review/
 .swiftpm/
 .env
 .env.*

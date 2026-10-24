@@ -9,10 +9,8 @@ private typealias AppearanceViewState<Value> = SwiftUI.State<Value>
     @ObservedObject var model: AppModel
     @Environment(\.colorScheme) private var scheme
     @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppearanceViewState private var roadmapExpanded = false
-    @AppearanceViewState private var gradientLowDraft = ""
-    @AppearanceViewState private var gradientHighDraft = ""
-    @AppearanceViewState private var gradientRangeError: String?
 
     private var progress: DailyLevelProgress? {
         model.dailyRewardState.flatMap { DailyLevelProgress(totalXP: $0.totalXP) }
@@ -20,7 +18,6 @@ private typealias AppearanceViewState<Value> = SwiftUI.State<Value>
     private var level: Int { progress?.level ?? 1 }
     private var currentRank: AppearanceUnlock { AppearanceCatalog.themes.last { level >= $0.level } ?? AppearanceCatalog.themes[0] }
     private var nextUnlock: AppearanceUnlock? { AppearanceCatalog.milestones.first { $0.level > level } }
-    private var customGradientUnlocked: Bool { level >= 70 }
     private var tint: Color { AppAppearanceStyle.accent(theme: model.effectiveAppearanceTheme, scheme: scheme) }
     private var gold: Color { AppAppearanceStyle.accent(theme: "stellar", scheme: scheme) }
 
@@ -29,7 +26,7 @@ private typealias AppearanceViewState<Value> = SwiftUI.State<Value>
             VStack(alignment: .leading, spacing: 26) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(L("等级与外观")).font(.title2.weight(.semibold))
-                    Text(L("用已结算 XP 解锁主题与菜单栏样式。"))
+                    Text(L("用已结算 XP 解锁主题与图标。"))
                         .font(.callout).foregroundStyle(.secondary)
                 }
                 if let error = model.dailyRewardError {
@@ -39,23 +36,20 @@ private typealias AppearanceViewState<Value> = SwiftUI.State<Value>
                 nextUnlockSummary
                 appearanceControls
                 menuControls
-                customGradientControls
                 unlockRoadmap
             }
             .padding(24).frame(maxWidth: 940, alignment: .leading).frame(maxWidth: .infinity)
         }.keytempoAppearance(model: model)
-            .onAppear(perform: loadGradientDrafts)
-            .onChange(of: model.menuGradientLowWPM) { _ in loadGradientDrafts() }
-            .onChange(of: model.menuGradientHighWPM) { _ in loadGradientDrafts() }
+
     }
 
     private var levelProfile: some View {
         VStack(alignment: .leading, spacing: 20) {
             HStack(spacing: 18) {
-                rankMedallion(currentRank, size: 68)
+                RankSeal(theme: currentRank.id, level: level, size: 84)
                 VStack(alignment: .leading, spacing: 5) {
                     Text(progress.map { L("等级 %@", $0.level.formatted()) } ?? L("等级数据暂不可用"))
-                        .font(.title2.weight(.semibold)).monospacedDigit()
+                        .font(.system(size: 27, weight: .semibold)).monospacedDigit()
                     Text(L(currentRank.name)).font(.callout).foregroundStyle(tint)
                 }
                 Spacer(minLength: 12)
@@ -73,8 +67,7 @@ private typealias AppearanceViewState<Value> = SwiftUI.State<Value>
                         Text(L("%@ / %@ XP", progress.progressXP.formatted(), progress.requiredXP.formatted()))
                             .font(.callout.weight(.medium)).monospacedDigit()
                     }
-                    ProgressView(value: Double(progress.progressXP), total: Double(progress.requiredXP))
-                        .tint(gold).accessibilityLabel(L("下一等级进度"))
+                    LevelProgressTrack(value: Double(progress.progressXP) / Double(progress.requiredXP), theme: model.effectiveAppearanceTheme)
                     HStack {
                         Text(L("还需 %@ XP", progress.remainingXP.formatted()))
                         Spacer(minLength: 12)
@@ -88,8 +81,12 @@ private typealias AppearanceViewState<Value> = SwiftUI.State<Value>
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
-        .padding(20)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 14))
+        .padding(22)
+        .background(alignment: .topTrailing) {
+            ThemeArtwork(theme: model.effectiveAppearanceTheme).frame(width: 350, height: 170).opacity(0.35)
+                .mask(LinearGradient(colors: [.clear, .black], startPoint: .leading, endPoint: .trailing))
+        }
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.72), in: RoundedRectangle(cornerRadius: 14))
     }
 
     private var nextUnlockSummary: some View {
@@ -145,20 +142,20 @@ private typealias AppearanceViewState<Value> = SwiftUI.State<Value>
                         Text(L("跟随系统")).tag("system")
                         Text(L("浅色")).tag("light")
                         Text(L("深色")).tag("dark")
-                    }.pickerStyle(.segmented).labelsHidden().frame(width: 280)
-                }
-                Divider().padding(.horizontal, 16)
-                AppearanceSettingRow(title: L("主题")) {
-                    HStack(spacing: 10) {
-                        Circle().fill(tint).frame(width: 9, height: 9).accessibilityHidden(true)
-                        Picker(L("主题"), selection: Binding(get: { model.effectiveAppearanceTheme }, set: model.setAppearanceTheme)) {
-                            ForEach(AppearanceCatalog.themes) { theme in
-                                Text(optionLabel(theme.name, required: theme.level)).tag(theme.id).disabled(level < theme.level)
-                            }
-                        }.labelsHidden().frame(width: 220)
-                    }
+                    }.pickerStyle(.segmented)
+                        .tint(AppAppearanceStyle.filledControlTint(theme: model.effectiveAppearanceTheme))
+                        .labelsHidden().frame(width: 280)
                 }
             }.background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 14))
+            Text(L("主题")).font(.callout.weight(.medium)).padding(.top, 4)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 12)], spacing: 12) {
+                ForEach(AppearanceCatalog.themes) { theme in
+                    ThemeChoice(theme: theme, unlocked: level >= theme.level,
+                                selected: model.effectiveAppearanceTheme == theme.id) {
+                        model.setAppearanceTheme(theme.id)
+                    }
+                }
+            }
         }
     }
 
@@ -179,143 +176,73 @@ private typealias AppearanceViewState<Value> = SwiftUI.State<Value>
                     }.labelsHidden().frame(width: 240)
                 }
                 Divider().padding(.horizontal, 16)
-                AppearanceSettingRow(title: L("图标与数字颜色")) {
-                    Picker(L("图标与数字颜色"), selection: Binding(get: { model.effectiveMenuColorMode }, set: model.setMenuColorMode)) {
-                        ForEach(AppearanceCatalog.colors) { color in
-                            Text(optionLabel(color.name, required: color.level)).tag(color.id).disabled(level < color.level)
-                        }
-                    }.labelsHidden().frame(width: 240)
-                }
+                menuMotionControls
             }.background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 14))
             Text(L("已解锁的选择会自动保存，并立即应用。"))
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
     }
 
-    private var customGradientControls: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text(L("自定义速度渐变")).font(.headline)
-                Spacer(minLength: 12)
-                if !customGradientUnlocked {
-                    Label(L("等级 %@ 解锁", 70.formatted()), systemImage: "lock").font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            VStack(alignment: .leading, spacing: 16) {
-                Toggle(L("使用自定义颜色与 WPM 范围"), isOn: Binding(
-                    get: { customGradientUnlocked && model.menuCustomGradientEnabled }, set: { model.setMenuCustomGradientEnabled($0) }))
-                    .disabled(!customGradientUnlocked)
-                if customGradientUnlocked && model.menuCustomGradientEnabled {
-                    HStack(spacing: 24) {
-                        gradientColorWell(low: true)
-                        gradientColorWell(low: false)
-                    }
-                    Divider()
-                    HStack(alignment: .bottom, spacing: 16) {
-                        gradientRangeField(low: true)
-                        Image(systemName: "arrow.right").foregroundStyle(.secondary).padding(.bottom, 6).accessibilityHidden(true)
-                        gradientRangeField(low: false)
-                        Spacer(minLength: 4)
-                        Button(L("应用范围"), action: applyGradientRange).padding(.bottom, 1)
-                    }
-                    if let gradientRangeError {
-                        Label(L(gradientRangeError), systemImage: "exclamationmark.circle")
-                            .font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
-                    }
-                    VStack(spacing: 7) {
-                        RoundedRectangle(cornerRadius: 4).fill(LinearGradient(colors: [gradientColor(low: true), gradientColor(low: false)],
-                            startPoint: .leading, endPoint: .trailing)).frame(height: 8).accessibilityHidden(true)
-                        HStack {
-                            Text(rangeText(model.menuGradientLowWPM) + " WPM")
-                            Spacer()
-                            Text(L("所选颜色范围"))
-                            Spacer()
-                            Text(rangeText(model.menuGradientHighWPM) + " WPM")
-                        }.font(.caption).foregroundStyle(.secondary).monospacedDigit()
-                    }
-                } else if !customGradientUnlocked {
-                    Text(L("累计 %@ XP 解锁自定义低速、高速颜色与渐变范围。", (DailyLevelSchedule.threshold(for: 70) ?? 0).formatted()))
-                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                }
-            }.padding(16).background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 14))
-            Text(L("启用后使用速度着色；颜色亮度随菜单栏明暗自动适配。"))
+    private var menuMotionControls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Toggle(L("图标随打字速度动效"), isOn: Binding(
+                get: { model.menuIconMotionEnabled }, set: { model.setMenuIconMotionEnabled($0) }))
+            Text(L("图标扫光与光弧随 WPM 加快。停止输入后静止。"))
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-        }
-    }
-    private func gradientColorWell(low: Bool) -> some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(L(low ? "低速端颜色" : "高速端颜色")).font(.callout)
-                Text("#" + (low ? model.menuLowColorHex : model.menuHighColorHex)).font(.caption.monospaced()).foregroundStyle(.secondary)
+            HStack(spacing: 12) {
+                Button(L("预览菜单栏特效"), action: model.previewMenuEffects)
+                    .disabled(!model.menuIconMotionEnabled || reduceMotion || contrast == .increased ||
+                              ProcessInfo.processInfo.isLowPowerModeEnabled || model.menuEffectPreviewWPM != nil)
+                if let sample = model.menuEffectPreviewWPM {
+                    Text(L("示例 %@ WPM", sample.formatted()))
+                        .font(.caption).monospacedDigit().foregroundStyle(tint)
+                } else {
+                    Text(L("30 → 70 → 120 WPM · 6 秒"))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
             }
-            Spacer(minLength: 4)
-            ColorPicker(L(low ? "低速端颜色" : "高速端颜色"), selection: Binding(
-                get: { gradientColor(low: low) }, set: { setGradientColor($0, low: low) }), supportsOpacity: false)
-                .labelsHidden().frame(width: 38)
-        }.frame(maxWidth: .infinity)
-    }
-    private func gradientRangeField(low: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(L(low ? "起始 WPM" : "结束 WPM")).font(.caption).foregroundStyle(.secondary)
-            TextField(L(low ? "起始 WPM" : "结束 WPM"), text: low ? $gradientLowDraft : $gradientHighDraft)
-                .textFieldStyle(.roundedBorder).frame(width: 100).monospacedDigit()
-        }
-    }
-    private func gradientColor(low: Bool) -> Color {
-        let hex = low ? model.menuLowColorHex : model.menuHighColorHex
-        guard hex.count == 6, let value = UInt32(hex, radix: 16) else { return .primary }
-        return Color(.sRGB, red: Double((value >> 16) & 255) / 255, green: Double((value >> 8) & 255) / 255,
-                     blue: Double(value & 255) / 255, opacity: 1)
-    }
-    private func setGradientColor(_ value: Color, low: Bool) {
-        guard let rgb = NSColor(value).usingColorSpace(.sRGB) else { return }
-        let components = [rgb.redComponent, rgb.greenComponent, rgb.blueComponent]
-        guard components.allSatisfy(\.isFinite) else { return }
-        let bytes = components.map { Int((min(1, max(0, $0)) * 255).rounded()) }
-        let hex = String(format: "%02X%02X%02X", bytes[0], bytes[1], bytes[2])
-        if low { model.setMenuLowColorHex(hex) } else { model.setMenuHighColorHex(hex) }
-    }
-    private func applyGradientRange() {
-        guard let low = Double(gradientLowDraft.trimmingCharacters(in: .whitespacesAndNewlines)),
-              let high = Double(gradientHighDraft.trimmingCharacters(in: .whitespacesAndNewlines)),
-              low.isFinite, high.isFinite, (0...1000).contains(low), (0...1000).contains(high), high >= low + 1 else {
-            gradientRangeError = "范围须为 0–1000 WPM，高速端至少比低速端高 1 WPM。"; return
-        }
-        model.setMenuGradientRange(low: low, high: high); gradientRangeError = nil
-    }
-    private func loadGradientDrafts() {
-        gradientLowDraft = rangeText(model.menuGradientLowWPM); gradientHighDraft = rangeText(model.menuGradientHighWPM)
-        gradientRangeError = nil
-    }
-    private func rangeText(_ value: Double) -> String {
-        guard value.isFinite, (0...1000).contains(value) else { return "—" }
-        return value == value.rounded() ? String(Int(value)) : String(value)
+            if reduceMotion || contrast == .increased || ProcessInfo.processInfo.isLowPowerModeEnabled {
+                Text(L("系统减少动态效果、增强对比度或低电量模式开启时，暂停动画；速度图标仍更新图案。"))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading).padding(16)
     }
 
     private var menuPreview: some View {
         HStack(spacing: 14) {
             HStack(spacing: 7) {
-                Image(systemName: menuSymbol).font(.system(size: 14, weight: .medium)).accessibilityHidden(true)
+                Image(nsImage: MenuIconRenderer.image(style: model.effectiveMenuBarStyle, level: level,
+                    wpm: model.menuEffectPreviewWPM.map(Double.init) ?? model.appearanceMenuWPM))
+                    .renderingMode(.template).frame(width: 18, height: 18).accessibilityHidden(true)
                 if !previewText.isEmpty { Text(previewText).font(.system(size: 13, weight: .medium)).monospacedDigit() }
             }
-            .foregroundStyle(menuTint)
-            .padding(.horizontal, 15).frame(minWidth: 105, minHeight: 36)
-            .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 9))
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 6).frame(minHeight: 27)
+            .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
             VStack(alignment: .leading, spacing: 4) {
                 Text(L("菜单栏预览")).font(.callout.weight(.medium))
-                Text(L(colorExplanation)).font(.caption).foregroundStyle(.secondary)
+                Text(L("使用系统前景色，适应菜单栏明暗。")).font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                if MenuIconRenderer.isSpeedResponsive(style: model.effectiveMenuBarStyle) {
+                    Text(L("图案随当前 WPM 变化；停打后恢复静止图案。"))
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 18) {
+                        ForEach([30, 70, 120], id: \.self) { sample in
+                            HStack(spacing: 5) {
+                                Image(nsImage: MenuIconRenderer.image(style: model.effectiveMenuBarStyle,
+                                                                     level: level, wpm: Double(sample)))
+                                    .renderingMode(.template).frame(width: 18, height: 18).accessibilityHidden(true)
+                                Text("\(sample) WPM").font(.caption).monospacedDigit()
+                            }
+                        }
+                    }.padding(.top, 3).accessibilityLabel(L("速度图案示例：30、70、120 WPM"))
+                }
             }
             Spacer(minLength: 0)
         }
-        .padding(16)
-        .background(tint.opacity(scheme == .dark ? 0.10 : 0.055), in: RoundedRectangle(cornerRadius: 14))
-        .overlay { RoundedRectangle(cornerRadius: 14).strokeBorder(tint.opacity(contrast == .increased ? 0.65 : 0.15), lineWidth: 1) }
+        .padding(.vertical, 12).padding(.horizontal, 2)
     }
 
-    private var menuSymbol: String {
-        AppAppearanceStyle.menuSymbol(style: model.effectiveMenuBarStyle)
-    }
     private var previewText: String {
         switch model.menuDisplay {
         case "icon": return ""
@@ -332,17 +259,6 @@ private typealias AppearanceViewState<Value> = SwiftUI.State<Value>
         guard let value, value.isFinite, value >= 0 else { return "— " + unit }
         return "≈" + value.formatted(.number.precision(.fractionLength(0))) + " " + unit
     }
-    private var colorExplanation: String {
-        switch model.effectiveMenuColorMode {
-        case "speed": return customGradientUnlocked && model.menuCustomGradientEnabled ? "使用自定义速度范围与颜色。" : "颜色随最新估算 WPM 变化。"
-        case "volume": return "颜色随今日已接受敲键量变化。"
-        default: return "使用系统前景色，适应菜单栏明暗。"
-        }
-    }
-    private var menuTint: Color {
-        let color = model.menuAppearanceTint(dark: scheme == .dark, increasedContrast: contrast == .increased)
-        return color.map { Color(nsColor: $0) } ?? .primary
-    }
     private func unlockTitle(_ unlock: AppearanceUnlock) -> String {
         if AppearanceCatalog.themes.contains(where: { $0.id == unlock.id }) { return L("%@ 主题", L(unlock.name)) }
         if AppearanceCatalog.icons.contains(where: { $0.id == unlock.id }) { return L("%@ 图标", L(unlock.name)) }
@@ -351,14 +267,47 @@ private typealias AppearanceViewState<Value> = SwiftUI.State<Value>
     private func optionLabel(_ title: String, required: Int) -> String {
         level >= required ? L(title) : L("%@ · 等级 %@ 解锁", L(title), required.formatted())
     }
-    private func rankMedallion(_ rank: AppearanceUnlock, size: CGFloat) -> some View {
-        let color = AppAppearanceStyle.accent(theme: rank.id, scheme: scheme)
-        return ZStack {
-            Circle().fill(color.opacity(0.10))
-            Circle().strokeBorder(color.opacity(0.28), lineWidth: 1)
-            Circle().inset(by: 6).strokeBorder(color.opacity(0.15), lineWidth: 1)
-            Image(systemName: rank.symbol).font(.system(size: size * 0.36, weight: .light)).foregroundStyle(color)
-        }.frame(width: size, height: size).accessibilityHidden(true)
+}
+
+private struct ThemeChoice: View {
+    let theme: AppearanceUnlock
+    let unlocked: Bool
+    let selected: Bool
+    let action: () -> Void
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.colorSchemeContrast) private var contrast
+    @AppearanceViewState private var hovered = false
+    private var tint: Color { AppAppearanceStyle.accent(theme: theme.id, scheme: scheme) }
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 0) {
+                ZStack(alignment: .leading) {
+                    ThemeArtwork(theme: theme.id)
+                    RankSeal(theme: theme.id, level: theme.level, size: 49).padding(.leading, 10)
+                }.frame(height: 73)
+                HStack(alignment: .center, spacing: 7) {
+                    Text(L(theme.name)).font(.callout.weight(.medium)).foregroundStyle(.primary)
+                    Spacer(minLength: 4)
+                    if !unlocked {
+                        Text(L("等级 %@", theme.level.formatted())).font(.caption).foregroundStyle(.secondary)
+                        Image(systemName: "lock.fill").font(.system(size: 9)).foregroundStyle(.secondary)
+                    } else if selected {
+                        Image(systemName: "checkmark.circle.fill").font(.system(size: 14)).foregroundStyle(tint)
+                    } else {
+                        Text(L("等级 %@", theme.level.formatted())).font(.caption).foregroundStyle(.secondary)
+                    }
+                }.padding(.horizontal, 13).padding(.top, 1).padding(.bottom, 12)
+            }
+            .background(AppAppearanceStyle.canvas(theme: theme.id, scheme: scheme), in: RoundedRectangle(cornerRadius: 12))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12).strokeBorder(selected ? tint : hovered && unlocked ? tint.opacity(0.55) : Color.primary.opacity(contrast == .increased ? 0.4 : 0.1), lineWidth: selected ? 1.8 : 1)
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 12))
+        }.buttonStyle(.plain).disabled(!unlocked)
+            .onHover { hovered = $0 }
+            .accessibilityLabel(unlocked ? L("%@ 主题", L(theme.name)) : L("%@ · 等级 %@ 解锁", L(theme.name), theme.level.formatted()))
+            .accessibilityValue(selected ? L("已选择") : unlocked ? L("已解锁") : L("尚未解锁"))
+            .help(unlocked ? L("%@ 主题", L(theme.name)) : L("%@ · 等级 %@ 解锁", L(theme.name), theme.level.formatted()))
     }
 }
 
