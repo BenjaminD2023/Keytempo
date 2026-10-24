@@ -16,6 +16,16 @@
 
 验证不向第三方 App 发送输入、不操作生产数据库、不改变权限或系统外观。本轮尚未实测真实跨午夜后熄屏／睡眠／关机的完整链路；这些边界由公开通知与隔离时钟／持久化夹具覆盖。也未重新执行十分钟功耗、CPU 或驻留内存验收，不将此前版本测量称为新版实测。旧版 Mac 自动升级和权限保留结果继续保留在下面的版本记录中。
 
+### 公开发布与本机升级补验
+
+已发布 [v0.5.0-beta](https://github.com/BenjaminD2023/Keytempo/releases/tag/v0.5.0-beta)，源标签为 `59ad9209213ab310702cf736f4705e5ace3d31dc`，随后单独提交签名 appcast。GitHub [Release validation](https://github.com/BenjaminD2023/Keytempo/actions/runs/40068214275) 在 macOS 15 runner 全部通过，包括完整单元测试、Release 构建、原生集成及源包／arm64 检查。公开发布为 prerelease；GitHub Latest 仍为 `v0.4.1`。
+
+重新下载公开 App／源包与 SHA256SUMS 均匹配，Sparkle 验证公开更新源和 App 包签名通过；公开源与本机 appcast 一致，新增项为 beta channel／build 19，原 7 个 item 元素在最终签名后仍逐字节保留。新版 App 的源码元数据为上述干净标签，稳定 designated requirement 哈希仍为 `6fdaca68a1f7838c6dcd83bfdc05a9d2f382f00a7080ae28ca1b82d6c655b3f4`。
+
+旧版 0.4.1 的“检查更新”仍显示已为最新版本；beta 不强推稳定通道。正常退出旧版并对 SQLite 做一致性备份，同时保留设置和旧 App 后，从公开下载包替换 `/Applications/Keytempo.app`。原生设置显示 **0.5.0-beta**，Input Monitoring／Accessibility 均仍为 **Allowed**，未重新授权。数据库 schema 5→6 后 integrity check 为 ok，旧表行数均保留；活动页敲键量、时长与旧速度继续可见。原累计 4 XP 换算为 600 XP，仍为等级 1、600／1,500，比例进度保持 40%。旧积分没有被补成新日分数；不足新样本显示 —。这次属于同签名公开包的本地替换升级，**没有**将其称作稳定→beta 的 Sparkle 自动安装测试。
+
+本机可恢复备份位于 `~/Library/Application Support/TypingSpeed/Backups/pre-0.5.0-beta-20261024T135813/`。升级后数据结构已新增，降级需先退出 App 并使用该旧数据库和旧 App 的配套备份。
+
 ## 0.4.2 build 18 开发版本验证（2026-10-24，未发布）
 
 该轮源码版本为 **0.4.2 build 18，尚未发布或安装**；日常安装的 `/Applications/Keytempo.app` 仍为 **0.4.1 build 17**。本轮没有更新公开 appcast、创建发布标签或推送新版本。本节仅记录开发构建与隔离夹具结果，0.4.1 的实际升级／权限保留记录继续独立保留在下文。
