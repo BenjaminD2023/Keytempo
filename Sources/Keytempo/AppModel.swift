@@ -266,7 +266,12 @@ struct HistoryDay: Identifiable {
     @Published private(set) var appearanceTheme = "classic"
     @Published private(set) var menuBarStyle = "keyboard"
     @Published private(set) var menuIconMotionEnabled = true
-    @Published var menuEffectPreviewWPM: Int?
+    @Published private(set) var menuIconLowWPM: Double = 20
+    @Published private(set) var menuIconHighWPM: Double = 120
+    @Published var menuEffectPreviewWPM: Double?
+    var menuIconSpeedRange: MenuIconSpeedRange {
+        MenuIconSpeedRange(lowWPM: menuIconLowWPM, highWPM: menuIconHighWPM) ?? .default
+    }
     @Published var statisticsPage = "today"
     private let appearanceStorage: UserDefaults?
     var onAppearanceUpdate: (() -> Void)?
@@ -376,6 +381,11 @@ struct HistoryDay: Identifiable {
         appearanceTheme = appearanceStorage?.string(forKey: "appearanceTheme") ?? "classic"
         menuBarStyle = appearanceStorage?.string(forKey: "menuBarStyle") ?? "keyboard"
         menuIconMotionEnabled = appearanceStorage?.object(forKey: "menuIconMotionEnabled") as? Bool ?? true
+        if let stored = appearanceStorage?.dictionary(forKey: "menuIconSpeedRange"),
+           let low = stored["lowWPM"] as? Double, let high = stored["highWPM"] as? Double,
+           let range = MenuIconSpeedRange(lowWPM: low, highWPM: high) {
+            menuIconLowWPM = range.lowWPM; menuIconHighWPM = range.highWPM
+        }
         if let perAppTracking { perAppTrackingEnabled = perAppTracking }
         let gap = UserDefaults.standard.object(forKey: "maximumGap") as? Double ?? 3
         let filterSuspected = UserDefaults.standard.object(forKey: "suspectedInputFilteringEnabled") as? Bool ?? true
@@ -960,6 +970,15 @@ struct HistoryDay: Identifiable {
         menuIconMotionEnabled = enabled
         appearanceStorage?.set(enabled, forKey: "menuIconMotionEnabled")
         onAppearanceUpdate?()
+    }
+    @discardableResult func setMenuIconSpeedRange(lowWPM: Double, highWPM: Double) -> Bool {
+        guard let range = MenuIconSpeedRange(lowWPM: lowWPM, highWPM: highWPM) else { return false }
+        guard range != menuIconSpeedRange else { return true }
+        // Save the pair together so a restart cannot load half of a new range.
+        appearanceStorage?.set(["lowWPM": range.lowWPM, "highWPM": range.highWPM], forKey: "menuIconSpeedRange")
+        menuIconLowWPM = range.lowWPM; menuIconHighWPM = range.highWPM
+        onAppearanceUpdate?()
+        return true
     }
     func previewMenuEffects() {
         guard menuIconMotionEnabled else { return }

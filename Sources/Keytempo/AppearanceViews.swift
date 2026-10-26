@@ -187,17 +187,19 @@ private typealias AppearanceViewState<Value> = SwiftUI.State<Value>
         VStack(alignment: .leading, spacing: 10) {
             Toggle(L("图标随打字速度动效"), isOn: Binding(
                 get: { model.menuIconMotionEnabled }, set: { model.setMenuIconMotionEnabled($0) }))
-            Text(L("图标扫光与光弧随 WPM 加快。停止输入后静止。"))
+            Text(L("图案与动效按所选 WPM 范围的百分比逐渐变化。停止输入后静止。"))
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            MenuIconRangeControls(model: model)
             HStack(spacing: 12) {
                 Button(L("预览菜单栏特效"), action: model.previewMenuEffects)
                     .disabled(!model.menuIconMotionEnabled || reduceMotion || contrast == .increased ||
                               ProcessInfo.processInfo.isLowPowerModeEnabled || model.menuEffectPreviewWPM != nil)
                 if let sample = model.menuEffectPreviewWPM {
-                    Text(L("示例 %@ WPM", sample.formatted()))
+                    Text(L("示例 %@ WPM · %@", sample.formatted(.number.precision(.fractionLength(0))),
+                           (model.menuIconSpeedRange.fraction(wpm: sample) ?? 0).formatted(.percent.precision(.fractionLength(0)))))
                         .font(.caption).monospacedDigit().foregroundStyle(tint)
                 } else {
-                    Text(L("30 → 70 → 120 WPM · 6 秒"))
+                    Text(L("%@ → %@ WPM · 6 秒", model.menuIconLowWPM.formatted(), model.menuIconHighWPM.formatted()))
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -212,7 +214,8 @@ private typealias AppearanceViewState<Value> = SwiftUI.State<Value>
         HStack(spacing: 14) {
             HStack(spacing: 7) {
                 Image(nsImage: MenuIconRenderer.image(style: model.effectiveMenuBarStyle, level: level,
-                    wpm: model.menuEffectPreviewWPM.map(Double.init) ?? model.appearanceMenuWPM))
+                    wpm: model.menuEffectPreviewWPM ?? model.appearanceMenuWPM,
+                    lowWPM: model.menuIconLowWPM, highWPM: model.menuIconHighWPM))
                     .renderingMode(.template).frame(width: 18, height: 18).accessibilityHidden(true)
                 if !previewText.isEmpty { Text(previewText).font(.system(size: 13, weight: .medium)).monospacedDigit() }
             }
@@ -224,18 +227,19 @@ private typealias AppearanceViewState<Value> = SwiftUI.State<Value>
                 Text(L("使用系统前景色，适应菜单栏明暗。")).font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if MenuIconRenderer.isSpeedResponsive(style: model.effectiveMenuBarStyle) {
-                    Text(L("图案随当前 WPM 变化；停打后恢复静止图案。"))
+                    Text(L("图案按速度百分比逐渐变化；停打后恢复静止图案。"))
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 18) {
-                        ForEach([30, 70, 120], id: \.self) { sample in
+                        ForEach([0.0, 0.5, 1.0], id: \.self) { fraction in
+                            let sample = max(0.001, model.menuIconLowWPM + fraction * (model.menuIconHighWPM - model.menuIconLowWPM))
                             HStack(spacing: 5) {
                                 Image(nsImage: MenuIconRenderer.image(style: model.effectiveMenuBarStyle,
-                                                                     level: level, wpm: Double(sample)))
+                                    level: level, wpm: sample, lowWPM: model.menuIconLowWPM, highWPM: model.menuIconHighWPM))
                                     .renderingMode(.template).frame(width: 18, height: 18).accessibilityHidden(true)
-                                Text("\(sample) WPM").font(.caption).monospacedDigit()
+                                Text(fraction.formatted(.percent.precision(.fractionLength(0)))).font(.caption).monospacedDigit()
                             }
                         }
-                    }.padding(.top, 3).accessibilityLabel(L("速度图案示例：30、70、120 WPM"))
+                    }.padding(.top, 3).accessibilityLabel(L("速度图案示例：0%、50%、100%"))
                 }
             }
             Spacer(minLength: 0)
@@ -266,6 +270,57 @@ private typealias AppearanceViewState<Value> = SwiftUI.State<Value>
     }
     private func optionLabel(_ title: String, required: Int) -> String {
         level >= required ? L(title) : L("%@ · 等级 %@ 解锁", L(title), required.formatted())
+    }
+}
+
+/// Keep edits local until both endpoints are valid, then persist one range.
+private struct MenuIconRangeControls: View {
+    @ObservedObject var model: AppModel
+    @AppearanceViewState private var lowText = ""
+    @AppearanceViewState private var highText = ""
+    @AppearanceViewState private var invalidRange = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(alignment: .bottom, spacing: 12) {
+                endpoint(L("起点 WPM · 0%"), text: $lowText)
+                Image(systemName: "arrow.right").foregroundStyle(.secondary).padding(.bottom, 6).accessibilityHidden(true)
+                endpoint(L("终点 WPM · 100%"), text: $highText)
+                Button(L("应用范围"), action: apply).padding(.bottom, 1)
+                Button(L("恢复默认")) {
+                    model.setMenuIconSpeedRange(lowWPM: 20, highWPM: 120)
+                    reload()
+                }.padding(.bottom, 1)
+            }
+            Text(L(invalidRange ? "范围须为 0–1,000 WPM，终点至少比起点高 1 WPM。" :
+                   "范围外保持最低或最高强度。只调整外观，不影响打字统计。"))
+                .font(.caption).foregroundStyle(invalidRange ? .red : .secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .onAppear(perform: reload)
+        .onChange(of: model.menuIconLowWPM) { _ in reload() }
+        .onChange(of: model.menuIconHighWPM) { _ in reload() }
+    }
+
+    private func endpoint(_ title: String, text: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title).font(.caption).foregroundStyle(.secondary)
+            TextField(title, text: text).textFieldStyle(.roundedBorder).frame(width: 105)
+                .accessibilityLabel(title).onSubmit(apply)
+        }
+    }
+    private func apply() {
+        guard let low = Double(lowText.trimmingCharacters(in: .whitespacesAndNewlines)),
+              let high = Double(highText.trimmingCharacters(in: .whitespacesAndNewlines)),
+              model.setMenuIconSpeedRange(lowWPM: low, highWPM: high) else {
+            invalidRange = true; return
+        }
+        reload()
+    }
+    private func reload() {
+        lowText = String(format: "%g", model.menuIconLowWPM)
+        highText = String(format: "%g", model.menuIconHighWPM)
+        invalidRange = false
     }
 }
 

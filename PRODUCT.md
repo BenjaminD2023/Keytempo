@@ -20,8 +20,8 @@ The menu bar is the frequent, glanceable surface. Its popover exposes recent and
 - Preserve context filtering, shortcut and repeat exclusions, privacy permissions, input boundaries and observed-interval timing. Never store input text, complete key sequences, clipboard contents or window titles.
 - Show daily Typing Score and daily XP separately. Settle completed reward days at observed rest, queue settlement presentations in order, and allow skipping without changing earnings.
 - Unlock only themes and menu icons using committed lifetime XP. Cosmetic selection does not alter scores, XP, input filtering or level thresholds. Levels continue beyond the highest cosmetic unlock at 100.
-- Keep nine differentiated themes, eight menu icons, system/light/dark appearance and a 16-milestone level roadmap. Rhythm, Ripple and Comet unlock at levels 15, 45 and 70 and change their static patterns with current WPM. Menu icons and text use the native system foreground color. Standard speed-responsive menu motion and settlement animations are available at every level; actual level gains retain their announcement.
-- Keep background CPU, memory, wakeups and battery cost low. Use existing event-driven updates; speed-responsive menu motion renews finite leases only with fresh active snapshots, stops when idle or hidden, and provides an off switch. Static speed-dependent icon patterns use those snapshots and remain available under Reduce Motion or low power without continuous animation. The explicit preview is finite and does not create typing records.
+- Keep nine differentiated themes, eight menu icons, system/light/dark appearance and a 16-milestone level roadmap. Rhythm, Ripple and Comet unlock at levels 15, 45 and 70 and change their static patterns proportionally with current WPM across a user-selected range (20–120 WPM by default). The same range controls the standard animation response for every icon. Menu icons and text use the native system foreground color. Standard speed-responsive menu motion and settlement animations are available at every level; actual level gains retain their announcement.
+- Keep background CPU, memory, wakeups and battery cost low. Use existing event-driven updates; speed-responsive menu motion renews finite leases only with fresh active snapshots, stops when idle or hidden, and provides an off switch. Static speed-dependent icon patterns use those snapshots and remain available under Reduce Motion or low power without continuous animation. The explicit six-second preview ramps through the selected range and does not create typing records.
 - Preserve native accessibility, keyboard navigation, Reduce Motion and Increase Contrast. Keep English and Simplified Chinese interfaces complete.
 
 ## Brand commitments
@@ -30,7 +30,7 @@ The application is named Keytempo. The user wants more polished and expressive h
 
 ## Evidence and delivery
 
-Production Swift sources, native self-checks and the installed app are the implementation authority. The stable release is 0.5.0, build 21. Use synthetic fixtures for testing settlement states and preserve real local typing history. Publish releases after local verification and user authorization.
+Production Swift sources, native self-checks and the installed app are the implementation authority. The stable release is 0.5.0, build 21; the 0.5.1-beta candidate uses build 22 and adds proportional menu-icon response and a configurable animation range. Use synthetic fixtures for testing settlement states and preserve real local typing history. Publish releases after local verification and user authorization.
 
 ## Product principles
 

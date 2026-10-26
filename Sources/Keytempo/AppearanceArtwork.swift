@@ -220,30 +220,25 @@ struct LevelProgressTrack: View {
     }
 }
 
-enum MenuIconSpeedState: Int, CaseIterable, Sendable {
-    case idle, slow, steady, fast, peak
-}
-
 /// The visible menu and its settings preview use the same 18-point drawing.
-/// Five static icons and three icons with five speed states cache at most twenty
-/// images. Level never changes detail; the system supplies template appearance.
+/// Geometry and opacity respond proportionally, at one-percent raster precision.
+/// Five static images plus three sets of 101 percentages and an idle image bound
+/// the cache to 311 images, regardless of speed, range changes or level.
 @MainActor enum MenuIconRenderer {
     private static var images: [String: NSImage] = [:]
-    nonisolated static func speedState(wpm: Double?) -> MenuIconSpeedState {
-        guard let wpm, wpm.isFinite, wpm > 0 else { return .idle }
-        if wpm < 40 { return .slow }
-        if wpm < 80 { return .steady }
-        if wpm < 120 { return .fast }
-        return .peak
-    }
+    static let cacheCapacity = 311
+    static var cachedImageCount: Int { images.count }
     nonisolated static func isSpeedResponsive(style: String) -> Bool {
         style == "rhythm" || style == "ripple" || style == "comet"
     }
-    static func image(style: String, level _: Int, wpm: Double? = nil) -> NSImage {
+    static func image(style: String, level _: Int, wpm: Double? = nil,
+                      lowWPM: Double = 20, highWPM: Double = 120) -> NSImage {
         let normalized = AppearanceCatalog.icons.contains { $0.id == style } ? style : "keyboard"
-        let state = speedState(wpm: wpm)
-        let key = isSpeedResponsive(style: normalized) ? "\(normalized)-\(state.rawValue)" : normalized
+        let percentage = MenuIconSpeedRange(lowWPM: lowWPM, highWPM: highWPM)?.percentage(wpm: wpm)
+        let key = isSpeedResponsive(style: normalized) ? "\(normalized)-\(percentage.map(String.init) ?? "idle")" : normalized
         if let cached = images[key] { return cached }
+        let fraction = CGFloat(percentage ?? 0) / 100
+        let isIdle = percentage == nil
         let image = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { _ in
             NSColor.black.setStroke(); NSColor.black.setFill()
             func line(_ points: [NSPoint], width: CGFloat = 1.25, close: Bool = false) {
@@ -261,20 +256,26 @@ enum MenuIconSpeedState: Int, CaseIterable, Sendable {
             }
             switch normalized {
             case "rhythm":
-                let profiles: [[CGFloat]] = [[2, 4, 2], [3, 7, 3], [3, 5, 9, 5, 3], [4, 8, 12, 8, 4], [5, 10, 15, 10, 5]]
-                let heights = profiles[state.rawValue]
+                let heights: [CGFloat] = isIdle ? [0, 2, 4, 2, 0] :
+                    [2 + fraction * 3, 3 + fraction * 7, 6 + fraction * 9, 3 + fraction * 7, 2 + fraction * 3]
                 for (index, height) in heights.enumerated() {
+                    guard height > 0 else { continue }
                     let x = 9 + (CGFloat(index) - CGFloat(heights.count - 1) / 2) * 2.8
+                    let opacity: CGFloat = (index == 0 || index == 4) ? 0.2 + 0.8 * fraction : 1
+                    NSColor.black.withAlphaComponent(opacity).setStroke()
                     line([NSPoint(x: x, y: 9 - height / 2), NSPoint(x: x, y: 9 + height / 2)], width: index == heights.count / 2 ? 1.7 : 1.25)
                 }
             case "ripple":
-                let radii: [[CGFloat]] = [[3.2], [4.7], [3.3, 6.3], [2.6, 5, 7.4], [2.6, 5, 7.4]]
-                let segments = [1, 1, 2, 2, 3][state.rawValue]
-                let gap: CGFloat = [0, 24, 18, 24, 22][state.rawValue]
-                for (ring, radius) in radii[state.rawValue].enumerated() {
+                let radii: [CGFloat] = isIdle ? [3.2] : [2.8 + 0.3 * fraction, 4.2 + 1.2 * fraction, 5.2 + 2.2 * fraction]
+                let opacity: [CGFloat] = [1, 0.18 + 0.82 * fraction, fraction * fraction]
+                for (ring, radius) in radii.enumerated() {
+                    NSColor.black.withAlphaComponent(opacity[ring]).setStroke()
+                    let segments = isIdle ? 1 : 3
+                    let gap: CGFloat = isIdle ? 0 : 5 + 17 * fraction
                     for segment in 0..<segments {
-                        let start = CGFloat(segment) / CGFloat(segments) * 360 + CGFloat(ring) * 18 + gap / 2
-                        let end = CGFloat(segment + 1) / CGFloat(segments) * 360 + CGFloat(ring) * 18 - gap / 2
+                        let rotation = CGFloat(ring) * (8 + 10 * fraction)
+                        let start = CGFloat(segment) / CGFloat(segments) * 360 + rotation + gap / 2
+                        let end = CGFloat(segment + 1) / CGFloat(segments) * 360 + rotation - gap / 2
                         let arc = NSBezierPath()
                         arc.appendArc(withCenter: NSPoint(x: 9, y: 9), radius: radius, startAngle: start, endAngle: end, clockwise: false)
                         arc.lineWidth = ring == 0 ? 1.15 : 0.95; arc.lineCapStyle = .round; arc.stroke()
@@ -282,16 +283,17 @@ enum MenuIconSpeedState: Int, CaseIterable, Sendable {
                 }
                 NSBezierPath(ovalIn: NSRect(x: 8.2, y: 8.2, width: 1.6, height: 1.6)).fill()
             case "comet":
-                let trailCount = state.rawValue
-                let head: CGFloat = state == .idle ? 9 : 12.1
-                sparkle(x: head, y: head, radius: state == .idle ? 2.6 : 3.1)
-                let length: CGFloat = [0, 2.8, 4, 5.2, 6.5][trailCount]
+                let head: CGFloat = isIdle ? 9 : 11 + 1.1 * fraction
+                sparkle(x: head, y: head, radius: isIdle ? 2.6 : 2.7 + 0.4 * fraction)
+                let length: CGFloat = 1.8 + 4.7 * fraction
                 let diagonal = CGFloat(1 / sqrt(2.0))
-                for index in 0..<trailCount {
-                    let offset = (CGFloat(index) - CGFloat(trailCount - 1) / 2) * 2.2
+                for index in 0..<(isIdle ? 0 : 4) {
+                    let offset = (CGFloat(index) - 1.5) * (1.5 + 0.7 * fraction)
                     let end = NSPoint(x: head - 4 * diagonal + offset * diagonal, y: head - 4 * diagonal - offset * diagonal)
                     let start = NSPoint(x: end.x - length * diagonal, y: end.y - length * diagonal)
-                    line([start, end], width: 1.1)
+                    let outer = index == 0 || index == 3
+                    NSColor.black.withAlphaComponent(outer ? 0.1 + 0.9 * fraction : 0.65 + 0.35 * fraction).setStroke()
+                    line([start, end], width: 0.85 + 0.25 * fraction)
                 }
             case "wave":
                 let heights: [CGFloat] = [4, 7, 11, 7, 4]

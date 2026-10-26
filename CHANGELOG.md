@@ -20,10 +20,25 @@ The project changed its public version convention before the `0.3.0` release. Hi
 | 0.5.0-beta | 0.5.0-beta / `v0.5.0-beta` | 19 | Prerelease: daily score, deferred XP settlement and refreshed rewards UI |
 | 0.5.0-rc | 0.5.0-rc / `v0.5.0-rc` | 20 | Release candidate: levels/appearance page and current-policy-only reward UI |
 | 0.5.0 | 0.5.0 / `v0.5.0` | 21 | Stable: daily score, deferred settlement, themes and speed-responsive icons |
+| 0.5.1-beta | 0.5.1-beta / `v0.5.1-beta` | 22 | Prerelease: proportional menu icon response and configurable WPM range |
 
 Already published signed archives, source tags and download URLs retain their original `1.x` identifiers. Their changelog labels are normalized; their embedded app versions have not been rewritten. New releases use `0.x` app versions and tags. The internal build number continues increasing, so Sparkle can offer `0.3.0` (build 11) to apps displaying `1.2.0` (build 9) or `1.2.1` (build 10).
 
 ## [Unreleased]
+
+## [0.5.1-beta] - 2026-10-26
+
+Prerelease, internal build 22. Stable installations remain on the stable update channel.
+
+### Added
+
+- Add a saved WPM range in Levels & Appearance to control the speed response of every animated menu icon. The default is 20–120 WPM; endpoints must be between 0 and 1,000 WPM, with at least 1 WPM between them.
+
+### Changed
+
+- Make Rhythm, Ripple and Comet change proportionally across the selected range instead of switching between four typing-speed tiers. The same percentage controls sweep cadence and intensity for all menu icons.
+- Replace the three-step menu preview with a six-second ramp across the selected range. Preview samples remain separate from typing records and XP.
+- Keep missing-rate and idle icons static, preserve native system colors, and retain motion controls for accessibility and low power. Typing measurement, score, XP and level unlocks are unchanged.
 
 ## [0.5.0] - 2026-10-25
 
@@ -266,7 +281,8 @@ Originally local `1.1.0` builds; no separate public release archive was publishe
 - Separate global estimates from a real confirmed editor adapter, with adaptive segment timing and local aggregate storage.
 - Establish core, persistence and application integration tests and document the limits of real-world input and resource validation.
 
-[Unreleased]: https://github.com/BenjaminD2023/Keytempo/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/BenjaminD2023/Keytempo/compare/v0.5.1-beta...HEAD
+[0.5.1-beta]: https://github.com/BenjaminD2023/Keytempo/compare/v0.5.0...v0.5.1-beta
 [0.5.0]: https://github.com/BenjaminD2023/Keytempo/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/BenjaminD2023/Keytempo/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/BenjaminD2023/Keytempo/compare/v0.3.2...v0.4.0

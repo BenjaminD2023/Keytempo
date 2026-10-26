@@ -112,7 +112,7 @@ Depth comes from opaque tonal surfaces and a small number of precise outlines. T
 
 Theme paths have distinct grammars: Classic has five restrained cadence curves; Ocean has nine wave contours; Prism has seven triangular facets; Forest has eight tapered contours; Ember has nine rising arcs; Graphite has seven stacked planes; Stellar has four inclined orbits and eleven fixed stars; Rose has nine five-lobed contours; Aurora has twelve interleaved ribbons and seven cross glints.
 
-Rank seals use one hexagonal outline with an inset hexagon and six radial cuts at every level. Theme symbols remain genuine SF Symbols. The eight tiny menu icons are hand-authored vector silhouettes inside the same 18-point extent. Five keep a fixed drawing. Rhythm grows from three to five bars with taller profiles; Ripple grows from one to three rings with additional cuts; Comet grows from no trail to four lengthening trails as WPM increases. Level never changes an icon's detail.
+Rank seals use one hexagonal outline with an inset hexagon and six radial cuts at every level. Theme symbols remain genuine SF Symbols. The eight tiny menu icons are hand-authored vector silhouettes inside the same 18-point extent. Five keep a fixed drawing. Rhythm changes bar heights; Ripple changes ring geometry and visibility; Comet changes trail length and visibility proportionally as WPM increases. Level never changes an icon's detail.
 
 ## Components
 
@@ -134,15 +134,17 @@ The seal is decorative; actual level and XP remain adjacent semantic text. Its s
 
 ### Menu response
 
-Rhythm, Ripple and Comet unlock at levels 15, 45 and 70. They select one static template from five current-WPM states: idle for missing, nonfinite or nonpositive WPM; slow below 40; steady from 40 to below 80; fast from 80 to below 120; peak at 120 or above. Existing aggregated snapshots drive the pattern changes. These discrete templates remain available with the motion switch off, Reduce Motion or low power; they add no continuous animation. The cache contains at most 20 templates: five fixed drawings plus three icons with five states each.
+Rhythm, Ripple and Comet unlock at levels 15, 45 and 70. Their drawings respond to the percentage `clamp((WPM − lower) / (upper − lower), 0, 1)` through the saved WPM range. The default range is 20–120 WPM; finite endpoints must be within 0–1,000 WPM and at least 1 WPM apart. Missing, nonfinite or nonpositive WPM uses a separate idle drawing. Bar geometry, ring visibility and comet trails vary proportionally instead of selecting coarse speed tiers. Existing aggregate snapshots drive these patterns, including with the motion switch off, Reduce Motion or low power.
 
-At every level, current WPM controls a contrasting sweep masked to the actual status icon, two short rotating cadence cuts and two sparks. Faster input increases the cadence from 0.65 to 2.6 cycles per second and strengthens the highlight across the standard 20–120 WPM range. The selected icon and neighboring number stay fixed inside their existing layout.
+The 18-point template cache rounds only drawing precision to 1% and keys images by style and percentage, independent of levels or range settings. Its maximum is 311 images: five fixed drawings plus three icons with 101 active percentages and one idle drawing each. Menu text and icons keep the native system foreground color.
 
-Fresh aggregated snapshots renew a finite 2.2-second Core Animation lease at most once per second, preserving phase while the template stays unchanged. A missing or stale snapshot expires the effect; absent or invalid current WPM stays static. The effect uses six layers including the root and alpha mask, plus one cancellable cleanup task. Every menu animation requests a 15–30 FPS range with 30 FPS preferred; the compositor owns actual scheduling. It reuses the existing snapshot updates and adds no animation clock, display link, per-key renderer or ongoing timer.
+At every level, current WPM controls a contrasting sweep masked to the actual status icon, two short rotating cadence cuts and two sparks. The unrounded percentage through the same selected range increases cadence from 0.65 to 2.6 cycles per second and strengthens the highlight. The selected icon and neighboring number keep their existing layout.
 
-Idle, pause, missing permissions, a disabled motion preference, hidden status window, sleep, screen sleep, session lock, Reduce Motion, Increase Contrast and low power remove the layers. Lifecycle suppression waits for a new idle-to-typing segment. User appearance changes, popover closure and statistics/settings-window closure also cancel the current presentation. A speed-state template change removes the old icon mask without cancelling an explicit preview.
+Fresh aggregated snapshots renew a finite 2.2-second Core Animation lease at most once per second, preserving cadence phase as the icon drawing changes. A missing or stale snapshot expires the effect; absent or invalid current WPM stays static. The effect uses six layers including the root and alpha mask, plus one cancellable cleanup task. Every menu animation requests a 15–30 FPS range with 30 FPS preferred; the compositor owns actual scheduling. Normal monitoring reuses existing snapshot updates and adds no animation clock, display link, per-key renderer or ongoing timer.
 
-The appearance panel provides a saved motion toggle and an explicit preview at every level. The preview uses the actual menu icon for three two-second samples—30, 70 and 120 WPM—then stops. For an unlocked speed-responsive icon, these samples show its slow, steady and peak patterns as well as the standard motion. The panel also shows three static pattern examples, available under Reduce Motion or low power. It labels samples without changing the menu title, typing records, history or XP. Visibility, permission, power and accessibility gates still apply to the animated preview.
+Idle, pause, missing permissions, a disabled motion preference, hidden status window, sleep, screen sleep, session lock, Reduce Motion, Increase Contrast and low power remove the layers. Lifecycle suppression waits for a new idle-to-typing segment. User appearance changes, popover closure and statistics/settings-window closure also cancel the current presentation. A proportional icon change updates its mask without cancelling an explicit preview.
+
+The appearance panel provides a saved motion toggle, lower/upper WPM settings and an explicit preview at every level. The six-second preview ramps through the selected range for five seconds, then holds the upper endpoint for one second. Its temporary sample updates are bounded to 10 Hz and end with the preview; normal monitoring does not adopt that update rate. The panel also shows static examples across the selected range, available under Reduce Motion or low power. Samples never change the menu title, typing records, history or XP. Visibility, permission, power and accessibility gates still apply to the animated preview.
 
 ### Settlement
 
@@ -155,7 +157,7 @@ Every level uses the same standard settlement animation in the selected theme. T
 - **Do** keep count, rate, estimate and unavailable-state semantics unchanged.
 - **Do** use native semantic text colors and hide decorative vectors from accessibility.
 - **Do** let each theme's geometry carry its distinction in both light and dark appearances.
-- **Do** cache fixed icons by style and responsive icons by their five speed states; let macOS supply the system foreground color.
+- **Do** cache fixed icons by style and responsive icons by their normalized percentage; let macOS supply the system foreground color.
 - **Don't** add a background animation clock, unbounded animation, random particle field or decorative blur.
 - **Don't** animate text reflow or change measurements to make the UI more dramatic.
 - **Don't** turn the data screens into stacks of decorative tiles.

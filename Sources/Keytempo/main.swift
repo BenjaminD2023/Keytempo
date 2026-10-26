@@ -30,7 +30,8 @@ import TypingCore
             guard let self, self.statusItem?.button != nil else { return }
             self.menuIconEffects?.preview(
                 permitted: !self.model.isPaused && self.model.hasInputPermission && self.model.hasAccessibilityPermission,
-                level: self.model.appearanceLevel, color: NSColor.labelColor, enabled: self.model.menuIconMotionEnabled) { [weak self] sample in
+                level: self.model.appearanceLevel, color: NSColor.labelColor, enabled: self.model.menuIconMotionEnabled,
+                lowWPM: self.model.menuIconLowWPM, highWPM: self.model.menuIconHighWPM) { [weak self] sample in
                     self?.model.menuEffectPreviewWPM = sample
                     self?.updateMenu()
                 }
@@ -131,14 +132,16 @@ import TypingCore
             let attributed = NSAttributedString(string: title, attributes: [.font: StatusItemPresentation.font, .foregroundColor: foreground])
             if !button.attributedTitle.isEqual(to: attributed) { button.attributedTitle = attributed }
             let level = model.dailyRewardState.flatMap { DailyLevelProgress(totalXP: $0.totalXP) }?.level ?? 1
-            let iconWPM = model.menuEffectPreviewWPM.map(Double.init) ?? model.appearanceMenuWPM
-            let icon = MenuIconRenderer.image(style: model.effectiveMenuBarStyle, level: level, wpm: iconWPM)
+            let iconWPM = model.menuEffectPreviewWPM ?? model.appearanceMenuWPM
+            let icon = MenuIconRenderer.image(style: model.effectiveMenuBarStyle, level: level, wpm: iconWPM,
+                lowWPM: model.menuIconLowWPM, highWPM: model.menuIconHighWPM)
             if button.image !== icon { menuIconEffects?.iconDidChange(); button.image = icon }
             button.contentTintColor = nil
             button.imagePosition = title.isEmpty ? .imageOnly : .imageLeading
             menuIconEffects?.update(typing: model.phase == "typing" && !model.selectedSpeedIsRecent,
                 permitted: !model.isPaused && model.hasInputPermission && model.hasAccessibilityPermission,
                 level: level, color: foreground, wpm: model.appearanceMenuWPM,
+                lowWPM: model.menuIconLowWPM, highWPM: model.menuIconHighWPM,
                 enabled: model.menuIconMotionEnabled, sampledAt: model.menuSnapshotUptime)
         }
         var tooltip = L("Keytempo · %@ · %@ · 输入速度约每秒更新。停止后保留最近值，等待不计时。WPM 为按键折算估算；KPM 可在设置中选择。", L(model.status), L("合并全部输入语言"))

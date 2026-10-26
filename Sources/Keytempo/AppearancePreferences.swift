@@ -166,47 +166,7 @@ extension View {
         }
     }
     expect(AppAppearanceStyle.rankTheme(level: 10_000) == "aurora", "unbounded levels retain highest rank artwork")
-    let speedCases: [(Double?, MenuIconSpeedState)] = [
-        (nil, .idle), (.nan, .idle), (.infinity, .idle), (-.infinity, .idle), (-1, .idle), (0, .idle),
-        (0.1, .slow), (40.0.nextDown, .slow), (40, .steady), (80.0.nextDown, .steady),
-        (80, .fast), (120.0.nextDown, .fast), (120, .peak), (.greatestFiniteMagnitude, .peak)
-    ]
-    for (wpm, state) in speedCases {
-        expect(MenuIconRenderer.speedState(wpm: wpm) == state, "speed icon state boundary for \(String(describing: wpm))")
-    }
-    let dynamicIDs: Set<String> = ["rhythm", "ripple", "comet"]
-    let stateSamples: [Double?] = [nil, 20, 60, 100, 160]
-    let baseIcon = MenuIconRenderer.image(style: "keyboard", level: 1)
-    var renderedImages = Set<ObjectIdentifier>()
-    for icon in AppearanceCatalog.icons {
-        let responsive = dynamicIDs.contains(icon.id)
-        expect(MenuIconRenderer.isSpeedResponsive(style: icon.id) == responsive, "speed response is explicit for \(icon.id)")
-        let stateImages = stateSamples.map { MenuIconRenderer.image(style: icon.id, level: 1, wpm: $0) }
-        if responsive {
-            let stateData = stateImages.compactMap(\.tiffRepresentation)
-            expect(stateData.count == stateSamples.count && Set(stateData).count == stateSamples.count,
-                   "\(icon.id) has five visibly distinct rendered speed states")
-            expect(Set(stateImages.map(ObjectIdentifier.init)).count == stateSamples.count,
-                   "\(icon.id) caches a separate image for each speed state")
-        }
-        for level in [1, 17, 18, 57, 58, 100, 10_000] {
-            for (wpm, state) in speedCases {
-                let image = MenuIconRenderer.image(style: icon.id, level: level, wpm: wpm)
-                let expected = stateImages[responsive ? state.rawValue : 0]
-                renderedImages.insert(ObjectIdentifier(image))
-                expect(image === expected, "\(icon.id) reuses its state image across speeds and levels")
-                expect(image.size == NSSize(width: 18, height: 18) && image.isTemplate,
-                       "fixed menu icon extent and native tint for \(icon.id) / \(level)")
-            }
-        }
-    }
-    for (wpm, _) in speedCases {
-        let unknown = MenuIconRenderer.image(style: "invalid", level: 10_000, wpm: wpm)
-        renderedImages.insert(ObjectIdentifier(unknown))
-        expect(baseIcon === unknown, "unknown icon uses the static fallback cache")
-    }
-    expect(!MenuIconRenderer.isSpeedResponsive(style: "invalid"), "unknown styles do not respond to speed")
-    expect(renderedImages.count == 20, "all speed and level combinations use twenty cached images")
+    failures += runProportionalMenuIconChecks()
     for (choice, baseline, options) in [(AppearancePolicy.Choice.theme, "classic", themes), (.icon, "keyboard", icons)] {
         for (value, level) in options {
             expect(AppearancePolicy.requiredLevel(value, choice: choice) == level, "\(value) unlock threshold")
@@ -221,6 +181,85 @@ extension View {
     expect(AppearancePolicy.mode("invalid") == "system", "invalid mode follows system")
     expect(AppAppearanceStyle.menuSymbol(style: "spark") == "sparkles", "native icon mapping")
     failures += runAppearancePersistenceChecks()
+    return failures
+}
+
+/// Exercise actual template raster output, not only the normalized scalar.
+/// Every responsive icon must change within the old 40–80 WPM tier, and the
+/// user's range must affect geometry and the shared motion profile equally.
+@MainActor private func runProportionalMenuIconChecks() -> [String] {
+    var failures = [String]()
+    func expect(_ condition: Bool, _ label: String) {
+        if !condition { failures.append("FAIL: proportional menu icons \(label)") }
+    }
+    let standard = MenuIconSpeedRange.default
+    let invalidRates: [Double?] = [nil, .nan, .infinity, -.infinity, -1, 0]
+    for rate in invalidRates {
+        expect(standard.fraction(wpm: rate) == nil, "invalid and absent rate remains idle")
+    }
+    for percentage in 0...100 {
+        let wpm = 20 + Double(percentage)
+        expect(abs((standard.fraction(wpm: wpm) ?? -1) - Double(percentage) / 100) < 1e-9,
+               "configured range maps linearly at \(percentage)%")
+    }
+    expect(standard.fraction(wpm: 1) == 0 && standard.fraction(wpm: .greatestFiniteMagnitude) == 1,
+           "valid rates outside the range clamp to its endpoints")
+    let dynamicIDs: Set<String> = ["rhythm", "ripple", "comet"]
+    let nearbyRates: [Double] = [50, 52, 54]
+    for icon in AppearanceCatalog.icons {
+        let responsive = dynamicIDs.contains(icon.id)
+        expect(MenuIconRenderer.isSpeedResponsive(style: icon.id) == responsive, "explicit speed response for \(icon.id)")
+        let idle = MenuIconRenderer.image(style: icon.id, level: 1)
+        let nearby = nearbyRates.map { MenuIconRenderer.image(style: icon.id, level: 1, wpm: $0) }
+        let data = nearby.compactMap(\.tiffRepresentation)
+        expect(data.count == nearbyRates.count, "\(icon.id) produces raster output")
+        if responsive {
+            expect(Set(data).count == nearbyRates.count,
+                   "\(icon.id) changes gradually inside the former fixed speed tier")
+            let midpoint = MenuIconRenderer.image(style: icon.id, level: 1, wpm: 70)
+            let configuredMidpoint = MenuIconRenderer.image(style: icon.id, level: 1, wpm: 140, lowWPM: 40, highWPM: 240)
+            expect(midpoint === configuredMidpoint,
+                   "\(icon.id) uses the chosen range and reuses equal-percentage output")
+            let low = MenuIconRenderer.image(style: icon.id, level: 1, wpm: 20)
+            let high = MenuIconRenderer.image(style: icon.id, level: 1, wpm: 120)
+            expect(MenuIconRenderer.image(style: icon.id, level: 1, wpm: 1) === low &&
+                   MenuIconRenderer.image(style: icon.id, level: 1, wpm: .greatestFiniteMagnitude) === high,
+                   "\(icon.id) clamps visual response below and above the range")
+            expect(low.tiffRepresentation != idle.tiffRepresentation,
+                   "\(icon.id) distinguishes typing at the low endpoint from idle")
+        } else {
+            expect(nearby.allSatisfy { $0 === idle }, "\(icon.id) retains its static silhouette")
+            expect(MenuIconRenderer.image(style: icon.id, level: 100, wpm: 950, lowWPM: 900, highWPM: 1_000) === idle,
+                   "\(icon.id) stays static under a custom range")
+        }
+        for rate in invalidRates {
+            expect(MenuIconRenderer.image(style: icon.id, level: 100, wpm: rate) === idle,
+                   "\(icon.id) does not invent input for an invalid rate")
+        }
+        for level in [1, 15, 45, 70, 100, 10_000] {
+            for (index, rate) in nearbyRates.enumerated() {
+                let image = MenuIconRenderer.image(style: icon.id, level: level, wpm: rate)
+                expect(image === nearby[index], "\(icon.id) reuses the same percentage across levels")
+                expect(image.size == NSSize(width: 18, height: 18) && image.isTemplate,
+                       "\(icon.id) preserves native tint and fixed menu width")
+            }
+        }
+    }
+    let base = MenuIconRenderer.image(style: "keyboard", level: 1)
+    expect(MenuIconRenderer.image(style: "invalid", level: 100, wpm: 90) === base &&
+           !MenuIconRenderer.isSpeedResponsive(style: "invalid"), "invalid style keeps the static fallback")
+    // Populate every percentage more than once, using different ranges. A
+    // range, level or arbitrary speed must not become another cache dimension.
+    for icon in dynamicIDs {
+        for percentage in 0...100 {
+            let first = MenuIconRenderer.image(style: icon, level: 1, wpm: 20 + Double(percentage))
+            let second = MenuIconRenderer.image(style: icon, level: 100,
+                wpm: 100 + Double(percentage) * 9, lowWPM: 100, highWPM: 1_000)
+            expect(first === second, "\(icon) cache key uses percentage rather than raw WPM or range")
+        }
+    }
+    expect(MenuIconRenderer.cachedImageCount <= MenuIconRenderer.cacheCapacity && MenuIconRenderer.cacheCapacity <= 311,
+           "all responsive states retain a finite shared image cache")
     return failures
 }
 
@@ -255,7 +294,11 @@ extension View {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let store = try AggregateStore(url: directory.appendingPathComponent("statistics.sqlite"))
             var seed = DailyRewardEngine(legacyTotalXP: seedXP / DailyRewardPolicy.legacyScale)
-            try store.save([], dailyRewards: seed.checkpoint(), batchID: "appearance-seed-\(UUID().uuidString)")
+            var preservedRow = StoredAggregate(day: AppModel.day(), timezone: TimeZone.current.identifier,
+                                               rule: "appearance-check", evidence: "probable", language: "en")
+            preservedRow.keys = 37; preservedRow.intervals = 30; preservedRow.seconds = 12.5
+            try store.save([preservedRow], dailyRewards: seed.checkpoint(), batchID: "appearance-seed-\(UUID().uuidString)")
+            let historyBefore = try store.query(since: "0000-01-01")
             let model = AppModel(dataDirectory: directory, monitoringEnabled: false, appearancePreferences: preferences)
             expect(model.appearanceLevel == expectedLevel, "seed unlocks exactly level \(expectedLevel)")
             let dailyBefore = model.dailyRewardState, legacyBefore = model.rewardState
@@ -263,6 +306,23 @@ extension View {
             expect(model.appearanceMode == "system" && model.appearanceTheme == "classic" && model.menuBarStyle == "keyboard",
                    "fresh preferences use system mode and baseline cosmetics")
             expect(model.menuIconMotionEnabled, "menu motion defaults on")
+            expect(model.menuIconLowWPM == 20 && model.menuIconHighWPM == 120, "missing range uses the shared defaults")
+            var appearanceUpdates = 0
+            model.onAppearanceUpdate = { appearanceUpdates += 1 }
+            expect(model.setMenuIconSpeedRange(lowWPM: 40, highWPM: 240), "custom animation range is accepted at every level")
+            expect(model.menuIconLowWPM == 40 && model.menuIconHighWPM == 240 && appearanceUpdates == 1,
+                   "accepted range updates the live appearance")
+            let savedRange = preferences.dictionary(forKey: "menuIconSpeedRange")
+            expect(savedRange?["lowWPM"] as? Double == 40 && savedRange?["highWPM"] as? Double == 240,
+                   "range endpoints persist together")
+            let invalidRanges: [(Double, Double)] = [(-1, 120), (20, 20), (100, 20), (20, 20.5), (20, 1_001), (.nan, 120), (20, .infinity)]
+            for (low, high) in invalidRanges {
+                expect(!model.setMenuIconSpeedRange(lowWPM: low, highWPM: high), "invalid range is rejected")
+                expect(model.menuIconLowWPM == 40 && model.menuIconHighWPM == 240 && appearanceUpdates == 1,
+                       "invalid range preserves the last accepted appearance")
+                expect(NSDictionary(dictionary: savedRange ?? [:]).isEqual(to: preferences.dictionary(forKey: "menuIconSpeedRange") ?? [:]),
+                       "invalid range does not partially persist")
+            }
             var previewCalls = 0
             model.onMenuEffectPreview = { previewCalls += 1 }
             model.previewMenuEffects()
@@ -298,6 +358,8 @@ extension View {
                    "cosmetic choices leave both reward states unchanged at level \(expectedLevel)")
             let storedAfter = try store.loadDailyRewardState()?.totalXP
             expect(storedAfter == storedBefore, "cosmetic choices do not change stored XP")
+            let historyAfter = try store.query(since: "0000-01-01")
+            expect(historyAfter == historyBefore, "appearance, ranges and previews preserve actual aggregate history")
             model.flushBeforeExit()
 
             let restored = AppModel(dataDirectory: directory, monitoringEnabled: false, appearancePreferences: preferences)
@@ -307,6 +369,8 @@ extension View {
                    "reload restores selected and effective level \(expectedLevel) cosmetics")
             expect(restored.appearanceMode == mode, "reload restores app appearance mode")
             expect(!restored.menuIconMotionEnabled, "reload preserves menu motion opt-out")
+            expect(restored.menuIconLowWPM == 40 && restored.menuIconHighWPM == 240,
+                   "reload preserves both custom range endpoints")
             var restoredPreviewCalls = 0
             restored.onMenuEffectPreview = { restoredPreviewCalls += 1 }
             restored.previewMenuEffects()
@@ -321,7 +385,8 @@ extension View {
                 expect(restored.effectiveAppearanceTheme == "classic" && restored.effectiveMenuBarStyle == "keyboard",
                        "clear history falls back to baseline cosmetics")
                 expect(restored.appearanceTheme == theme && restored.menuBarStyle == icon && restored.appearanceMode == "dark" &&
-                       restored.menuIconMotionEnabled, "clear preserves appearance preferences while applying level fallback")
+                       restored.menuIconMotionEnabled && restored.menuIconLowWPM == 40 && restored.menuIconHighWPM == 240,
+                       "clear preserves appearance preferences and range while applying level fallback")
                 restored.previewMenuEffects()
                 expect(restoredPreviewCalls == 2, "clear history keeps standard motion preview available")
                 restored.flushBeforeExit()
@@ -329,6 +394,7 @@ extension View {
                 expect(cleared.dailyRewardState?.totalXP == 0 && cleared.appearanceLevel == 1 &&
                        cleared.effectiveAppearanceTheme == "classic" && cleared.effectiveMenuBarStyle == "keyboard" && cleared.menuIconMotionEnabled,
                        "clear fallback, zero XP and enabled motion survive reload")
+                expect(cleared.menuIconLowWPM == 40 && cleared.menuIconHighWPM == 240, "cleared history retains the custom range after reload")
                 cleared.flushBeforeExit()
             } else { restored.flushBeforeExit() }
         } catch {
@@ -360,6 +426,8 @@ extension View {
         expect(legacy.appearanceMode == clean.appearanceMode && legacy.appearanceTheme == clean.appearanceTheme &&
                legacy.menuBarStyle == clean.menuBarStyle && legacy.effectiveAppearanceTheme == clean.effectiveAppearanceTheme &&
                legacy.effectiveMenuBarStyle == clean.effectiveMenuBarStyle && legacy.menuIconMotionEnabled == clean.menuIconMotionEnabled &&
+               legacy.menuIconLowWPM == clean.menuIconLowWPM && legacy.menuIconHighWPM == clean.menuIconHighWPM &&
+               legacy.menuIconLowWPM == 20 && legacy.menuIconHighWPM == 120 &&
                legacy.appearanceMenuWPM == clean.appearanceMenuWPM && legacy.appearanceLevel == clean.appearanceLevel &&
                legacy.dailyRewardState?.totalXP == clean.dailyRewardState?.totalXP, "legacy color preferences have no effect on current appearance or XP")
         expect(legacy.effectiveAppearanceTheme == "classic" && legacy.effectiveMenuBarStyle == "keyboard",
@@ -368,5 +436,27 @@ extension View {
                "loading old preferences does not rewrite the preference domain")
         clean.flushBeforeExit(); legacy.flushBeforeExit()
     } else { failures.append("FAIL: appearance isolated legacy preferences suites") }
+    let malformedRanges: [[String: Any]] = [
+        ["lowWPM": 240.0, "highWPM": 40.0], ["lowWPM": -1.0, "highWPM": 120.0],
+        ["lowWPM": 20.0, "highWPM": 1_001.0], ["lowWPM": 20.0],
+        ["lowWPM": "twenty", "highWPM": 120.0]
+    ]
+    for (index, value) in malformedRanges.enumerated() {
+        let suiteName = "local.keytempo.invalid-animation-range.\(UUID().uuidString)"
+        guard let preferences = UserDefaults(suiteName: suiteName) else {
+            failures.append("FAIL: appearance invalid-range isolated suite"); continue
+        }
+        defer { preferences.removePersistentDomain(forName: suiteName) }
+        preferences.set(value, forKey: "menuIconSpeedRange")
+        preferences.set("preserve", forKey: "unrelatedPreference")
+        let before = preferences.persistentDomain(forName: suiteName) ?? [:]
+        let restored = AppModel(dataDirectory: root.appendingPathComponent("malformed-range-\(index)"),
+                                monitoringEnabled: false, appearancePreferences: preferences)
+        expect(restored.menuIconLowWPM == 20 && restored.menuIconHighWPM == 120,
+               "malformed stored range falls back as one pair")
+        expect(NSDictionary(dictionary: before).isEqual(to: preferences.persistentDomain(forName: suiteName) ?? [:]),
+               "malformed range recovery does not rewrite unrelated or stored preferences")
+        restored.flushBeforeExit()
+    }
     return failures
 }

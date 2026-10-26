@@ -2,7 +2,7 @@ import AppKit
 import QuartzCore
 
 /// A valid current rate controls cadence and highlight strength. The shared
-/// response is available at every level and uses a bounded 20–120 WPM scale.
+/// response is available at every level and uses the user's presentation scale.
 struct MenuIconMotionProfile: Equatable {
     let fraction: Double
     var cyclesPerSecond: Double { 0.65 + fraction * 1.95 }
@@ -10,10 +10,9 @@ struct MenuIconMotionProfile: Equatable {
     var lineWidth: CGFloat { CGFloat(0.70 + fraction * 0.35) }
 
     init?(wpm: Double?, lowWPM: Double = 20, highWPM: Double = 120) {
-        guard let wpm, wpm.isFinite, wpm > 0,
-              lowWPM.isFinite, highWPM.isFinite, lowWPM >= 0, highWPM >= lowWPM + 1,
-              highWPM <= 1_000 else { return nil }
-        fraction = min(1, max(0, (wpm - lowWPM) / (highWPM - lowWPM)))
+        guard let range = MenuIconSpeedRange(lowWPM: lowWPM, highWPM: highWPM),
+              let fraction = range.fraction(wpm: wpm) else { return nil }
+        self.fraction = fraction
     }
 }
 
@@ -97,7 +96,10 @@ struct MenuIconEffectPolicy {
     private var effectView: MenuIconEffectView?
     private var cleanupTask: Task<Void, Never>?
     private var previewTask: Task<Void, Never>?
-    private var previewStage: ((Int?) -> Void)?
+    private var previewStage: ((Double?) -> Void)?
+    private var previewLease: MenuIconEffectLease?
+    private var iconMask: CALayer?
+    private var maskNeedsRefresh = false
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
     private var suspended = false
     private var generation: UInt64 = 0
@@ -146,6 +148,7 @@ struct MenuIconEffectPolicy {
                 lowWPM: Double = 20, highWPM: Double = 120, enabled: Bool = true, sampledAt: TimeInterval? = nil) {
         let now = ProcessInfo.processInfo.systemUptime
         let state = environment(permitted: permitted, enabled: enabled)
+        if maskNeedsRefresh { refreshIconMask() }
         // Ordinary idle snapshots must not cancel an explicitly requested demo;
         // permission, power, visibility and accessibility gates still do.
         if isPreviewing {
@@ -167,46 +170,66 @@ struct MenuIconEffectPolicy {
         }
     }
 
-    /// Explicit, labeled sample data only. Three finite two-second stages never
-    /// modify the menu title, input pipeline, history or XP.
+    /// Explicit sample data only. A five-second proportional sweep and one-second
+    /// hold never modify the menu title, input pipeline, history or XP. The finite
+    /// preview alone samples at up to 10 Hz; normal snapshots remain at 1 Hz.
     func preview(permitted: Bool, level: Int, color: NSColor, enabled: Bool = true,
-                 onStage: @escaping (Int?) -> Void) {
+                 lowWPM: Double = 20, highWPM: Double = 120,
+                 onStage: @escaping (Double?) -> Void) {
         cancel()
-        guard environment(permitted: permitted, enabled: enabled).allowsMotion else {
+        guard environment(permitted: permitted, enabled: enabled).allowsMotion,
+              let range = MenuIconSpeedRange(lowWPM: lowWPM, highWPM: highWPM) else {
             onStage(nil); return
         }
         previewStage = onStage
         let token = previewGeneration
-        playPreviewStage(30, level: level, color: color)
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        playPreviewStage(range.lowWPM, range: range, level: level, color: color)
         guard previewGeneration == token, isPreviewing else { return }
         previewTask = Task { [weak self] in
-            for sample in [70, 120] {
-                do { try await Task.sleep(for: .seconds(2)); try Task.checkCancellation() }
+            for _ in 1...50 {
+                do { try await Task.sleep(for: .milliseconds(100)); try Task.checkCancellation() }
                 catch { return }
                 guard let self, self.previewGeneration == token,
                       self.environment(permitted: permitted, enabled: enabled).allowsMotion else { self?.cancel(); return }
-                self.playPreviewStage(sample, level: level, color: color)
+                let elapsed = ProcessInfo.processInfo.systemUptime - startedAt
+                self.playPreviewStage(range.previewWPM(elapsed: elapsed), range: range, level: level, color: color)
+                if elapsed >= 5 { break }
             }
-            do { try await Task.sleep(for: .seconds(2)); try Task.checkCancellation() }
+            let remaining = max(0, 6 - (ProcessInfo.processInfo.systemUptime - startedAt))
+            do { try await Task.sleep(for: .seconds(remaining)); try Task.checkCancellation() }
             catch { return }
             guard let self, self.previewGeneration == token else { return }
             self.cancel()
         }
     }
 
-    private func playPreviewStage(_ wpm: Int, level: Int, color: NSColor) {
-        guard let profile = MenuIconMotionProfile(wpm: Double(wpm)) else { return }
-        let lease = MenuIconEffectLease(id: 0, issuedAt: ProcessInfo.processInfo.systemUptime,
-                                       duration: 2, profile: profile, phase: 0)
+    private func playPreviewStage(_ wpm: Double, range: MenuIconSpeedRange, level: Int, color: NSColor) {
+        let now = ProcessInfo.processInfo.systemUptime
         let token = previewGeneration
         previewStage?(wpm)
         guard previewGeneration == token, isPreviewing else { return }
+        guard let profile = MenuIconMotionProfile(wpm: wpm, lowWPM: range.lowWPM, highWPM: range.highWPM) else {
+            previewLease = nil; removeEffect(); return
+        }
+        let lease = MenuIconEffectLease(id: 0, issuedAt: now, duration: 1.2, profile: profile,
+                                       phase: previewLease?.phase(at: now) ?? 0)
+        previewLease = lease
         render(lease: lease, level: level, color: color)
     }
 
-    /// A cached glyph change invalidates its old mask, not the explicit preview.
-    /// The next aggregate update or preview stage supplies the matching overlay.
-    func iconDidChange() { policy.invalidate(); removeEffect() }
+    /// Geometry changes replace the mask without restarting the cadence or
+    /// cancelling a preview. The caller assigns the new image before update().
+    func iconDidChange() { maskNeedsRefresh = true }
+
+    private func refreshIconMask() {
+        maskNeedsRefresh = false
+        guard let image = button?.image,
+              let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        iconMask?.contents = cgImage
+        CATransaction.commit()
+    }
 
     /// Lifecycle suppression requires a new idle→typing segment. Catch-up
     /// notifications after sleep or an accessibility change cannot replay it.
@@ -214,6 +237,7 @@ struct MenuIconEffectPolicy {
     func cancel() {
         previewGeneration &+= 1
         previewTask?.cancel(); previewTask = nil
+        previewLease = nil
         let callback = previewStage; previewStage = nil
         policy.invalidate(); removeEffect()
         callback?(nil)
@@ -259,6 +283,7 @@ struct MenuIconEffectPolicy {
         gleam.locations = [-0.55, -0.35, -0.15]
         let mask = CALayer(); mask.frame = extent; mask.contents = maskImage
         mask.contentsGravity = .resizeAspect; mask.contentsScale = scale; gleam.mask = mask
+        iconMask = mask; maskNeedsRefresh = false
         let sweep = CAKeyframeAnimation(keyPath: "locations")
         sweep.preferredFrameRateRange = frameRate
         var times: [NSNumber] = [], positions: [[NSNumber]] = []
@@ -342,6 +367,7 @@ struct MenuIconEffectPolicy {
         cleanupTask?.cancel(); cleanupTask = nil
         effectView?.layer?.sublayers?.forEach { $0.removeAllAnimations() }
         effectView?.removeFromSuperview(); effectView = nil; activeProfile = nil
+        iconMask = nil
     }
 
     func shutdown() {
@@ -377,6 +403,31 @@ func runMenuIconEffectChecks() -> [String] {
     for value in invalidRates {
         expect(MenuIconMotionProfile(wpm: value) == nil, "invalid or absent WPM has no invented cadence")
     }
+    let defaultRange = MenuIconSpeedRange.default
+    expect(defaultRange.lowWPM == 20 && defaultRange.highWPM == 120, "default speed scale is preserved")
+    expect(defaultRange.fraction(wpm: 20) == 0 && defaultRange.fraction(wpm: 70) == 0.5 &&
+           defaultRange.fraction(wpm: 120) == 1, "percentage maps the selected endpoints and midpoint")
+    for endpoints in [(Double.nan, 120.0), (20, Double.infinity), (-1, 120), (100, 100), (100, 100.5), (20, 1_001)] {
+        expect(MenuIconSpeedRange(lowWPM: endpoints.0, highWPM: endpoints.1) == nil, "invalid ranges are rejected")
+    }
+    expect(MenuIconSpeedRange(lowWPM: 0, highWPM: 1) != nil &&
+           MenuIconSpeedRange(lowWPM: 999, highWPM: 1_000) != nil, "valid narrow boundary ranges are accepted")
+    let customRange = MenuIconSpeedRange(lowWPM: 40, highWPM: 200)!
+    expect(customRange.fraction(wpm: 80) == 0.25 && customRange.fraction(wpm: 120) == 0.5,
+           "custom scale is proportional rather than tier-based")
+    var previousFraction = -1.0
+    for step in 0...100 {
+        let wpm = defaultRange.lowWPM + Double(step)
+        let profile = MenuIconMotionProfile(wpm: wpm)!
+        expect(abs(profile.fraction - Double(step) / 100) < 1e-12 && profile.fraction > previousFraction,
+               "every percent of the scale changes intensity without speed tiers")
+        previousFraction = profile.fraction
+    }
+    expect(customRange.previewWPM(elapsed: 0) == 40 && customRange.previewWPM(elapsed: 2.5) == 120 &&
+           customRange.previewWPM(elapsed: 5) == 200 && customRange.previewWPM(elapsed: 6) == 200,
+           "preview sweeps the configured scale and holds its endpoint")
+    expect(customRange.previewWPM(elapsed: -1) == 40 && customRange.previewWPM(elapsed: .nan) == 40,
+           "preview timing rejects invalid progression")
     let low = MenuIconMotionProfile(wpm: 30)!, medium = MenuIconMotionProfile(wpm: 70)!, high = MenuIconMotionProfile(wpm: 120)!
     expect(low.cyclesPerSecond < medium.cyclesPerSecond && medium.cyclesPerSecond < high.cyclesPerSecond &&
            high.cyclesPerSecond > low.cyclesPerSecond * 2.5, "30/70/120 WPM have visibly distinct cadence")
