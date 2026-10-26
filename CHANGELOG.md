@@ -21,10 +21,25 @@ The project changed its public version convention before the `0.3.0` release. Hi
 | 0.5.0-rc | 0.5.0-rc / `v0.5.0-rc` | 20 | Release candidate: levels/appearance page and current-policy-only reward UI |
 | 0.5.0 | 0.5.0 / `v0.5.0` | 21 | Stable: daily score, deferred settlement, themes and speed-responsive icons |
 | 0.5.1-beta | 0.5.1-beta / `v0.5.1-beta` | 22 | Prerelease: proportional menu icon response and configurable WPM range |
+| 0.5.1 | 0.5.1 / `v0.5.1` | 23 | Stable: proportional menu icons and typing/count display by default |
 
 Already published signed archives, source tags and download URLs retain their original `1.x` identifiers. Their changelog labels are normalized; their embedded app versions have not been rewritten. New releases use `0.x` app versions and tags. The internal build number continues increasing, so Sparkle can offer `0.3.0` (build 11) to apps displaying `1.2.0` (build 9) or `1.2.1` (build 10).
 
 ## [Unreleased]
+
+## [0.5.1] - 2026-10-26
+
+Stable release, internal build 23. Includes the proportional menu-icon improvements introduced in 0.5.1-beta.
+
+### Added
+
+- Add a saved WPM range in Levels & Appearance for all animated menu icons, defaulting to 20–120 WPM, with a six-second proportional preview.
+
+### Changed
+
+- Default to **Live WPM while typing, today's keys when idle** when no menu display preference has been saved. Preserve existing selections, including WPM, KPM, count and icon-only modes.
+- Make Rhythm, Ripple and Comet change proportionally across the selected WPM range; use the same percentage for sweep cadence and intensity across all menu icons. Native system colors, idle behavior and accessibility/power controls remain in place.
+- Keep typing measurement, score, XP and level unlocks unchanged; preview values do not enter typing records.
 
 ## [0.5.1-beta] - 2026-10-26
 
@@ -281,7 +296,8 @@ Originally local `1.1.0` builds; no separate public release archive was publishe
 - Separate global estimates from a real confirmed editor adapter, with adaptive segment timing and local aggregate storage.
 - Establish core, persistence and application integration tests and document the limits of real-world input and resource validation.
 
-[Unreleased]: https://github.com/BenjaminD2023/Keytempo/compare/v0.5.1-beta...HEAD
+[Unreleased]: https://github.com/BenjaminD2023/Keytempo/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/BenjaminD2023/Keytempo/compare/v0.5.0...v0.5.1
 [0.5.1-beta]: https://github.com/BenjaminD2023/Keytempo/compare/v0.5.0...v0.5.1-beta
 [0.5.0]: https://github.com/BenjaminD2023/Keytempo/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/BenjaminD2023/Keytempo/compare/v0.4.0...v0.4.1

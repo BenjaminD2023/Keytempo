@@ -247,7 +247,7 @@ struct HistoryDay: Identifiable {
     var historyGranularity: HistoryGranularity { .forHistoryDays(historyDays) }
     @Published var excludedAppsText = UserDefaults.standard.string(forKey: "excludedApps") ?? "com.apple.Terminal\ncom.mitchellh.ghostty\ncom.googlecode.iterm2"
     @Published var maximumGap = UserDefaults.standard.object(forKey: "maximumGap") as? Double ?? 3
-    @Published var menuDisplay = UserDefaults.standard.string(forKey: "menuDisplay") ?? "speed"
+    @Published var menuDisplay = UserDefaults.standard.string(forKey: "menuDisplay") ?? "hybrid"
     @Published var diagnosticsEnabled = false
     @Published var suspectedInputFilteringEnabled = UserDefaults.standard.object(forKey: "suspectedInputFilteringEnabled") as? Bool ?? true
     @Published var chineseKeyboardCompatibilityEnabled = UserDefaults.standard.bool(forKey: "chineseKeyboardCompatibilityEnabled")
