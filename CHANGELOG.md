@@ -22,10 +22,18 @@ The project changed its public version convention before the `0.3.0` release. Hi
 | 0.5.0 | 0.5.0 / `v0.5.0` | 21 | Stable: daily score, deferred settlement, themes and speed-responsive icons |
 | 0.5.1-beta | 0.5.1-beta / `v0.5.1-beta` | 22 | Prerelease: proportional menu icon response and configurable WPM range |
 | 0.5.1 | 0.5.1 / `v0.5.1` | 23 | Stable: proportional menu icons and typing/count display by default |
+| 0.5.2 | 0.5.2 / `v0.5.2` | 24 | Stable: midnight XP credit and settlement playback on opening |
 
 Already published signed archives, source tags and download URLs retain their original `1.x` identifiers. Their changelog labels are normalized; their embedded app versions have not been rewritten. New releases use `0.x` app versions and tags. The internal build number continues increasing, so Sparkle can offer `0.3.0` (build 11) to apps displaying `1.2.0` (build 9) or `1.2.1` (build 10).
 
-## [Unreleased]
+## [0.5.2] - 2026-10-28
+
+Stable release, internal build 24.
+
+### Changed
+
+- Credit completed reward days at midnight in the saved reward timezone, including while the Mac is in use, instead of waiting for display sleep, system sleep or shutdown. Catch up after wake, launch or menu/app opening when midnight was missed.
+- Present committed unseen settlements on the next menu/app opening in date order. XP is credited independently of playback; reopening or skipping animations cannot award it twice.
 
 ## [0.5.1] - 2026-10-26
 
@@ -296,7 +304,8 @@ Originally local `1.1.0` builds; no separate public release archive was publishe
 - Separate global estimates from a real confirmed editor adapter, with adaptive segment timing and local aggregate storage.
 - Establish core, persistence and application integration tests and document the limits of real-world input and resource validation.
 
-[Unreleased]: https://github.com/BenjaminD2023/Keytempo/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/BenjaminD2023/Keytempo/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/BenjaminD2023/Keytempo/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/BenjaminD2023/Keytempo/compare/v0.5.0...v0.5.1
 [0.5.1-beta]: https://github.com/BenjaminD2023/Keytempo/compare/v0.5.0...v0.5.1-beta
 [0.5.0]: https://github.com/BenjaminD2023/Keytempo/compare/v0.4.1...v0.5.0

@@ -96,7 +96,7 @@ struct DailyRewardsTests {
         checkTrue(daily.state.current!.preliminary)
     }
 
-    @Test func midnightSealsButRestAloneCommitsXpExactlyOnce() {
+    @Test func midnightSettlementCreditsScoreAndImprovementExactlyOnceWithoutRest() {
         let base = date("2026-10-24T12:00:00Z"), midnight = date("2026-10-25T00:00:00Z")
         var daily = measured(base: base, legacyXP: 10)
         let score = daily.state.current!.score!
@@ -106,10 +106,11 @@ struct DailyRewardsTests {
         checkEqual(daily.state.totalXP, 1500); checkTrue(daily.unpersistedReceipts.isEmpty)
         daily.observeLegacyImprovement(total: 5)
         checkEqual(daily.state.totalXP, 1500)
-        daily.settleEndedDays(at: midnight.addingTimeInterval(60))
+        daily.settleEndedDays(at: midnight)
         checkNil(daily.error); checkEqual(daily.unpersistedReceipts.count, 1)
         let receipt = daily.unpersistedReceipts[0]
         checkEqual(receipt.ordinaryXP, score); checkEqual(receipt.improvementXP, 750)
+        checkEqual(receipt.settledAt, midnight)
         checkEqual(receipt.beforeXP, 1500); checkEqual(receipt.afterXP, 1500 + score + 750)
         checkTrue(receipt.isValid); checkEqual(daily.state.pendingImprovementXP, 0)
         checkNil(daily.state.days["2026-10-24"])
@@ -120,7 +121,7 @@ struct DailyRewardsTests {
         checkEqual(saved.receipts.count, 1); checkTrue(daily.unpersistedReceipts.isEmpty)
     }
 
-    @Test func middaySleepDoesNotCloseTheCurrentDayAndIdleDoesNotAddPoints() {
+    @Test func sameDaySettlementDoesNotCloseTheCurrentDayAndIdleDoesNotAddPoints() {
         let base = date("2026-10-24T12:00:00Z")
         var daily = measured(base: base)
         let totals = daily.state.current!.totals, score = daily.state.current!.score
@@ -128,6 +129,62 @@ struct DailyRewardsTests {
         daily.advance(to: base.addingTimeInterval(3600))
         checkEqual(daily.state.current!.totals, totals); checkEqual(daily.state.current!.score, score)
         checkEqual(daily.state.totalXP, 0); checkTrue(daily.unpersistedReceipts.isEmpty)
+    }
+
+    @Test func repeatedSettlementChecksPreserveCurrentDayInputContinuity() {
+        let yesterday = date("2026-10-24T12:00:00Z"), today = date("2026-10-25T12:00:00Z")
+        var daily = measured(base: yesterday)
+        let earned = daily.state.current!.score!
+        daily.settleEndedDays(at: date("2026-10-25T00:00:00Z"))
+        var uninterrupted = DailyRewardEngine(coverageStart: today, progressionTimeZone: utc)
+        var stats = StatisticsEngine(config: SegmentationConfig(maximumGap: 3, ruleID: rule), timeZone: utc)
+        for index in 0..<200 {
+            let event = input(86400 + Double(index) / 5, base: yesterday)
+            let result = stats.recordWithIntervals(event)
+            daily.record(input: event, result: result, rule: rule)
+            uninterrupted.record(input: event, result: result, rule: rule)
+            // Reopening the menu or app may check for ended days repeatedly.
+            daily.settleEndedDays(at: event.date.addingTimeInterval(0.05))
+        }
+        checkNil(daily.error)
+        checkEqual(daily.state.current, uninterrupted.state.current)
+        checkEqual(daily.state.current!.totals.keys, 200)
+        checkEqual(daily.state.current!.totals.intervals, 199)
+        checkEqual(daily.state.current!.totals.seconds, 39.8, accuracy: 1e-6)
+        checkEqual(daily.state.totalXP, earned)
+        checkEqual(daily.unpersistedReceipts.count, 1)
+    }
+
+    @Test func fixedShanghaiMidnightSettlesAtUTC16AndClockRollbackCannotCreditAgain() {
+        let zone = TimeZone(identifier: "Asia/Shanghai")!
+        let base = date("2026-10-24T15:00:00Z"), midnight = date("2026-10-24T16:00:00Z")
+        var daily = DailyRewardEngine(coverageStart: base, progressionTimeZone: zone)
+        var stats = StatisticsEngine(config: SegmentationConfig(maximumGap: 3, ruleID: rule), timeZone: zone)
+        for index in 0..<100 {
+            let event = input(Double(index) / 5, base: base)
+            daily.record(input: event, result: stats.recordWithIntervals(event), rule: rule)
+        }
+        let score = daily.state.current!.score!
+        daily.settleEndedDays(at: midnight.addingTimeInterval(-0.001))
+        checkEqual(daily.state.currentDay, "2026-10-24")
+        checkEqual(daily.state.totalXP, 0)
+        checkTrue(daily.unpersistedReceipts.isEmpty)
+
+        daily.settleEndedDays(at: midnight)
+        checkNil(daily.error)
+        checkEqual(daily.state.currentDay, "2026-10-25")
+        checkEqual(daily.state.progressionTimezone, "Asia/Shanghai")
+        checkEqual(daily.state.totalXP, score)
+        checkEqual(daily.unpersistedReceipts.map(\.day), ["2026-10-24"])
+        checkEqual(daily.unpersistedReceipts.first?.settledAt, midnight)
+        let settledState = daily.state, receipt = daily.unpersistedReceipts
+
+        for check in [base, midnight, midnight.addingTimeInterval(60)] {
+            daily.settleEndedDays(at: check)
+        }
+        checkNil(daily.error)
+        checkEqual(daily.state, settledState)
+        checkEqual(daily.unpersistedReceipts, receipt)
     }
 
     @Test func multiDaySettlementKeepsChronologicalReceiptsAndPreservesTheNewOpenDay() {
@@ -164,7 +221,7 @@ struct DailyRewardsTests {
         checkTrue(periodic.unpersistedReceipts.isEmpty)
     }
 
-    @Test func restoringWhileAwakeDoesNotSettleAndCannotBridgeAnOldPredecessor() throws {
+    @Test func restoringSealsEndedDaysForCoordinatorSettlementAndCannotBridgeInput() throws {
         let base = date("2026-10-24T12:00:00Z")
         var first = DailyRewardEngine(coverageStart: base, progressionTimeZone: utc)
         var stats = StatisticsEngine(config: SegmentationConfig(maximumGap: 3, ruleID: rule), timeZone: utc)

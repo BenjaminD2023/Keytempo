@@ -114,7 +114,7 @@ struct RewardDashboard: View {
             }.font(.caption).foregroundStyle(.secondary).monospacedDigit()
         } else if selected != nil {
             Text(L("当日分数 1:1 转为 XP")).font(.caption).foregroundStyle(RewardAccent.xp.color(for: colorScheme))
-            Label(selected?.sealed == true ? L("等待下一次熄屏或睡眠结算") : L("日界线后，熄屏或睡眠时结算"), systemImage: "moon")
+            Label(selected?.sealed == true ? L("正在完成每日结算") : L("每日 00:00 自动入账 XP"), systemImage: "clock")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         } else {
             Text(L("尚未覆盖")).font(.caption).foregroundStyle(.secondary)
@@ -168,7 +168,7 @@ struct RewardDetails: View {
                         Text("Score = 150 × √(minutes + keys / 300) × √(WPM / 50) × exp((C − 75) / 100)").textSelection(.enabled)
                         Text(L("分数使用当日加权估算 WPM、每秒稳定度、实际打字时长与敲键数量。当天暂定值可能升降；等待不增加时长。"))
                         Text(L("最终分数按 1:1 转为 XP，个人进步在已完成日验证后另计。"))
-                        Text(L("日界线仍划分统计日期；使用电脑时，昨日冻结待结算，下一次熄屏或睡眠再入账。睡眠跨日时在恢复后补做，不唤醒电脑。"))
+                        Text(L("按奖励时区每日 00:00 结算并入账 XP，无需等待熄屏或睡眠。下次打开菜单栏或 App 时播放结算动画；睡眠或退出期间错过的结算在恢复或打开时补做。"))
                         Text(L("结算只入账一次；跳过动画不影响 XP。未覆盖的旧记录不补造新分数。"))
                         Text(L("旧 XP 与等级门槛同步换算为 150 倍，原有等级保留；换算本身不作为新增奖励。"))
                         Text(L("稳定度使用 Monkeytype 式完整一秒速率样本和 Kogasa 映射；统计覆盖不同，不能直接与 Monkeytype 测试成绩比较。"))

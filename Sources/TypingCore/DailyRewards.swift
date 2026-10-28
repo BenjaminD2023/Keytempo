@@ -195,8 +195,8 @@ public struct DailyRewardEngine: Sendable {
         hasPendingChanges = error == nil
     }
 
-    /// A relaunch ends timing continuity and seals past dates, but does not
-    /// assume that relaunching while awake means a rest/settlement occurred.
+    /// A relaunch ends timing continuity and seals past dates. The coordinator
+    /// then settles ended days after observing completed-day improvement.
     public init(restoring: DailyRewardState, now: Date) throws {
         guard restoring.isValid else { throw DailyRewardError.invalidState }
         state = restoring; tracker = ActivityTracker(timeZone: TimeZone(identifier: restoring.progressionTimezone)!)
@@ -289,11 +289,20 @@ public struct DailyRewardEngine: Sendable {
         state.observedLegacyImprovementXP = total; state.pendingImprovementXP = pending.partialValue; hasPendingChanges = true
     }
 
-    /// Called only after a real rest boundary or confirmed startup catch-up.
-    /// Midday sleep cannot commit the still-open current reward day.
+    /// Called at midnight and on lifecycle catch-up, regardless of rest state.
+    /// Repeated checks during an open day must not interrupt input continuity.
+    public func hasEndedDays(at date: Date) -> Bool {
+        guard error == nil, date.timeIntervalSince1970.isFinite else { return false }
+        let current = max(state.currentDay, day(date))
+        return state.days.keys.contains { $0 < current }
+    }
+
     public mutating func settleEndedDays(at date: Date) {
         guard error == nil else { return }
         var transaction = self
+        transaction.advance(to: date)
+        guard transaction.error == nil else { error = transaction.error; return }
+        guard transaction.state.days.keys.contains(where: { $0 < transaction.state.currentDay }) else { return }
         transaction.interrupt(at: date, reason: "daily-settlement")
         guard transaction.error == nil else { error = transaction.error; return }
         let ended = transaction.state.days.keys.filter { $0 < transaction.state.currentDay }.sorted()

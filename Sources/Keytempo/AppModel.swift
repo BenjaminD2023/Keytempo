@@ -314,8 +314,6 @@ struct HistoryDay: Identifiable {
     private var settlementRequestVersion: UInt64 = 0
     private var dailyRewardsNeedSave: Bool { dailyRewardEngine?.error == nil && dailyRewardEngine?.hasPendingChanges == true }
     private var midnightWork: DispatchWorkItem?
-    private var displaysSleeping = false
-    private var restWasObserved = false
     private var settlementPresentationRequested = false
     private var settlementReadInFlight = false
     private var loadedRewardDays: [StoredRewardDay] = []
@@ -434,12 +432,12 @@ struct HistoryDay: Identifiable {
         let center = NSWorkspace.shared.notificationCenter
         observers.append(center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self else { return }; self.monitor.flushPendingInput(); self.finishActivitySession("sleep"); self.sleeping = true; self.interruptEngine(); self.settleDailyRewardsForRest(); self.monitor.stop(); self.flush(); self.status = "系统睡眠，统计已中断"; self.stopUI(); self.resetTenMinuteWindow()
+                guard let self else { return }; self.monitor.flushPendingInput(); self.finishActivitySession("sleep"); self.sleeping = true; self.interruptEngine(); self.settleEndedDailyRewards(); self.monitor.stop(); self.flush(); self.status = "系统睡眠，统计已中断"; self.stopUI(); self.resetTenMinuteWindow()
             }
         })
         observers.append(center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self else { return }; self.sleeping = false; self.interruptEngine(); self.settleDailyRewardsForRest(); self.restWasObserved = false; self.resetTenMinuteWindow(); if !self.isPaused { self.monitor.start() }; self.refreshSnapshot()
+                guard let self else { return }; self.sleeping = false; self.interruptEngine(); self.settleEndedDailyRewards(); self.scheduleRewardMidnight(); self.resetTenMinuteWindow(); if !self.isPaused { self.monitor.start() }; self.refreshSnapshot()
             }
         })
         installDailyRewardLifecycle(center: center)
@@ -894,6 +892,10 @@ struct HistoryDay: Identifiable {
                     self.scheduleSave(after: self.retryCount == 0 ? 30 : Double(self.retryCount * 10))
                 }
                 self.publishRewards(); self.startActivityReadIfPossible(); self.finishRewardExportIfReady(); self.finishDailyRewardExportIfReady()
+                // A midnight receipt must follow an older write immediately,
+                // even with every window closed. Retry failures retain backoff.
+                if self.retryCount == 0 && self.retryWrite == nil && self.dailyRewardsNeedSave &&
+                    self.dailyRewardEngine?.unpersistedReceipts.isEmpty == false { self.flush() }
                 if self.settlementPresentationRequested {
                     if self.retryCount == 0 && self.retryWrite == nil && self.dailyRewardsNeedSave { self.flush() }
                     self.readNextSettlement()
@@ -1543,25 +1545,28 @@ private extension AppModel {
         model.dailyRewardEngine?.advance(to: midnight); model.publishDailyRewards()
         expect(model.dailyRewardState?.days[rewardDay]?.sealed == true && model.dailyRewardState?.totalXP == 0 &&
                model.dailyRewardEngine?.unpersistedReceipts.isEmpty == true,
-               "midnight seals the measured day without awarding XP")
+               "low-level day rollover seals before the coordinator commits XP")
 
-        // A rest boundary can arrive while an older canonical checkpoint is
-        // already queued. Presentation must wait for both ordered commits.
+        // Midnight can arrive while an older canonical checkpoint is queued.
+        // Both writes must complete promptly, without opening any view.
         let writeGate = DispatchSemaphore(value: 0)
         model.diskQueue.async { _ = writeGate.wait(timeout: .now() + 8) }
         model.flush()
         expect(model.activeReceipt != nil, "fixture holds a real checkpoint in flight")
-        model.settleDailyRewardsForRest(at: midnight.addingTimeInterval(60))
+        model.handleRewardMidnight(at: midnight)
         expect(model.dailyRewardState?.totalXP == score && model.dailyRewardEngine?.unpersistedReceipts.count == 1,
-               "rest awards the ended daily score exactly once")
+               "awake midnight credits the ended day without a rest notification")
+        expect(model.dailyRewardEngine?.unpersistedReceipts.first?.settledAt == midnight,
+               "the midnight callback uses the reward-day boundary")
         var presentations = 0
         model.onSettlementAvailable = { if model.settlementReceipt != nil { presentations += 1 } }
         defer { model.onSettlementAvailable = nil }
-        model.requestSettlementPresentation()
-        expect(model.settlementReceipt == nil && presentations == 0,
-               "receipt presentation waits behind the active checkpoint")
         writeGate.signal()
-        waitFor({ model.activeReceipt == nil && model.settlementReceipt != nil }, "ordered rest receipt becomes presentable")
+        waitFor({ model.activeReceipt == nil && !model.dailyRewardsNeedSave }, "midnight receipt commits after the older write without a view")
+        expect(model.settlementReceipt == nil && presentations == 0 && !model.settlementPresentationRequested,
+               "midnight credits XP without interrupting the user with an animation")
+        model.requestSettlementPresentation()
+        waitFor({ model.settlementReceipt != nil }, "next opening presents the committed midnight receipt")
         expect(model.settlementReceipt?.day == rewardDay && model.settlementReceipt?.afterXP == score && presentations == 1,
                "popup receives the immutable settled-day balance")
         do {
@@ -1591,9 +1596,9 @@ private extension AppModel {
                 "acknowledgment drains the visible queue")
         expect(model.settlementReceipt == nil && model.dailyRewardState?.totalXP == score,
                "acknowledgment never awards the settled XP again")
-        model.settleDailyRewardsForRest(at: midnight.addingTimeInterval(120))
+        model.settleEndedDailyRewards(at: midnight.addingTimeInterval(120))
         expect(model.dailyRewardState?.totalXP == score && model.dailyRewardEngine?.unpersistedReceipts.isEmpty == true,
-               "repeated rest notifications cannot double-credit XP")
+               "repeated lifecycle checks cannot double-credit XP")
         model.flushBeforeExit()
         let restored = AppModel(dataDirectory: directory, monitoringEnabled: false, perAppTracking: false)
         expect(restored.dailyRewardState?.totalXP == score && restored.dailyRewardState?.settledThroughDay == rewardDay,
@@ -1605,6 +1610,38 @@ private extension AppModel {
                    "restart preserves acknowledgment without deleting immutable history")
         } catch { failures.append("FAIL: daily reward integration restore: \(error.localizedDescription)") }
         restored.flushBeforeExit()
+
+        // Missed midnight: an awake launch must catch up without a sleep event,
+        // and the same open hook must also cover a delayed scheduler callback.
+        let catchupDirectory = directory.appendingPathComponent("awake-catchup")
+        do {
+            var saved = DailyRewardState(coverageStart: base, progressionTimezone: calendar.timeZone.identifier,
+                                         currentDay: rewardDay)
+            saved.days[rewardDay] = measured; saved.revision = 1
+            let db = try AggregateStore(url: catchupDirectory.appendingPathComponent("statistics.sqlite"))
+            try db.save([], dailyRewards: DailyRewardWrite(state: saved), batchID: "before-missed-midnight")
+            let catchup = AppModel(dataDirectory: catchupDirectory, monitoringEnabled: false, perAppTracking: false)
+            expect(catchup.dailyRewardState?.totalXP == score && catchup.settlementReceipt == nil,
+                   "awake startup credits overdue XP without presenting an animation")
+            catchup.requestSettlementPresentation()
+            waitFor({ catchup.activeReceipt == nil && catchup.settlementReceipt != nil }, "startup receipt presents after persistence on opening")
+            catchup.closeSettlementPresentation(); catchup.flushBeforeExit()
+
+            let openOnly = AppModel(dataDirectory: directory.appendingPathComponent("open-catchup"), monitoringEnabled: false, perAppTracking: false)
+            saved.revision = 0
+            openOnly.dailyRewardEngine = try DailyRewardEngine(restoring: saved, now: Date())
+            openOnly.dailyRewardState = openOnly.dailyRewardEngine?.state
+            let openGate = DispatchSemaphore(value: 0)
+            openOnly.diskQueue.async { _ = openGate.wait(timeout: .now() + 8) }
+            openOnly.requestSettlementPresentation()
+            expect(openOnly.dailyRewardState?.totalXP == score && openOnly.settlementReceipt == nil,
+                   "opening catches up a missed midnight and waits for a durable receipt")
+            openGate.signal()
+            waitFor({ openOnly.settlementReceipt != nil }, "opening presents its overdue receipt without sleep")
+            openOnly.requestSettlementPresentation()
+            expect(openOnly.dailyRewardState?.totalXP == score, "repeated opening cannot re-award overdue XP")
+            openOnly.closeSettlementPresentation(); openOnly.flushBeforeExit()
+        } catch { failures.append("FAIL: daily reward integration awake catch-up: \(error.localizedDescription)") }
         return failures
     }
 
@@ -2318,7 +2355,7 @@ private extension AppModel {
 }
 
 // The daily ledger is independent of its presentation. All database work runs
-// on diskQueue; opening a window never awards XP or reads input content.
+// on diskQueue; opening a window catches up ended days without re-awarding XP.
 extension AppModel {
     var selectedDailyRewardDay: DailyRewardDay? {
         let key = rewardDayKey(activityDate)
@@ -2367,40 +2404,36 @@ extension AppModel {
     }
 
     private func installDailyRewardLifecycle(center: NotificationCenter) {
+        // Catch up dates missed while the process was asleep or closed. XP
+        // does not depend on observing a rest notification or opening a view.
+        settleEndedDailyRewards()
         guard monitoringEnabled else { return }
-        displaysSleeping = SystemRestState.allDisplaysAsleep == true
         observers.append(center.addObserver(forName: NSWorkspace.screensDidSleepNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
                 // NSWorkspace posts the display-power notification; verify all
                 // online displays where that metadata is available.
                 guard SystemRestState.allDisplaysAsleep != false else { return }
-                self.displaysSleeping = true; self.monitor.flushPendingInput()
-                self.interruptEngine(); self.settleDailyRewardsForRest()
+                self.monitor.flushPendingInput()
+                self.interruptEngine(); self.settleEndedDailyRewards()
             }
         })
         observers.append(center.addObserver(forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                if self.displaysSleeping || self.restWasObserved { self.settleDailyRewardsForRest() }
-                self.displaysSleeping = false; self.restWasObserved = false; self.refreshSnapshot()
+                self.settleEndedDailyRewards()
+                self.scheduleRewardMidnight(); self.refreshSnapshot()
             }
         })
         observers.append(center.addObserver(forName: NSWorkspace.willPowerOffNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                self.monitor.flushPendingInput(); self.interruptEngine(); self.settleDailyRewardsForRest()
+                self.monitor.flushPendingInput(); self.interruptEngine(); self.settleEndedDailyRewards()
             }
         })
         observers.append(NotificationCenter.default.addObserver(forName: .NSSystemClockDidChange, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refreshSnapshot(); self?.scheduleRewardMidnight() }
+            MainActor.assumeIsolated { self?.settleEndedDailyRewards(); self?.refreshSnapshot(); self?.scheduleRewardMidnight() }
         })
-        // A boot after the last recorded reward day proves that the machine
-        // was powered down at that boundary. An ordinary awake app relaunch
-        // does not provide that evidence and must keep the old day pending.
-        if displaysSleeping || (SystemRestState.bootDate.map { boot in
-            dailyRewardState?.days.values.contains { $0.day < rewardDayKey(boot) } == true
-        } ?? false) { settleDailyRewardsForRest() }
         scheduleRewardMidnight()
     }
 
@@ -2412,16 +2445,26 @@ extension AppModel {
         guard let next = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: Date())) else { return }
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }; self.midnightWork = nil
-            self.refreshSnapshot()
-            if self.sleeping || self.displaysSleeping || SystemRestState.allDisplaysAsleep == true { self.settleDailyRewardsForRest() }
-            self.flush(); self.scheduleRewardMidnight()
+            self.handleRewardMidnight()
+            self.scheduleRewardMidnight()
         }
         midnightWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + max(1, next.timeIntervalSinceNow), execute: work)
     }
 
-    fileprivate func settleDailyRewardsForRest(at date: Date = Date()) {
-        restWasObserved = true
+    fileprivate func handleRewardMidnight(at date: Date = Date()) {
+        settleEndedDailyRewards(at: date)
+        refreshSnapshot()
+    }
+
+    fileprivate func settleEndedDailyRewards(at date: Date = Date()) {
+        guard !clearing, dailyRewardEngine?.hasEndedDays(at: date) == true else { return }
+        // Do not flush the monitor on an ordinary same-day opening. Drain
+        // ended-day input before advancing its calendar attribution.
+        monitor.flushPendingInput()
+        // Resolve old candidate evidence before completed-day improvement is
+        // evaluated, so its bonus belongs to this receipt rather than tomorrow.
+        rewardEngine?.interrupt(at: date, reason: "daily-settlement")
         rewardEngine?.advance(to: date); observeDailyImprovement()
         dailyRewardEngine?.settleEndedDays(at: date)
         publishDailyRewards(); flush()
@@ -2429,6 +2472,9 @@ extension AppModel {
 
     func requestSettlementPresentation() {
         guard !clearing else { return }
+        // Also handles a delayed midnight callback or an awake app relaunch.
+        // Settlement is idempotent and the current day remains open.
+        settleEndedDailyRewards()
         if !settlementPresentationRequested { settlementQueuePosition = 1; settlementQueueCount = 0 }
         settlementPresentationRequested = true
         flush(); readNextSettlement()
