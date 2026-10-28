@@ -11,6 +11,16 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <keytempo:signingChannel>local-development</keytempo:signingChannel>
     <keytempo:designatedRequirementSHA256>6fdaca68a1f7838c6dcd83bfdc05a9d2f382f00a7080ae28ca1b82d6c655b3f4</keytempo:designatedRequirementSHA256>
     <item>
+      <title>Keytempo 0.5.2</title>
+      <link>https://github.com/BenjaminD2023/Keytempo/releases/tag/v0.5.2</link>
+      <pubDate>Wed, 28 Oct 2026 03:01:42 GMT</pubDate>
+      <sparkle:version>24</sparkle:version>
+      <sparkle:shortVersionString>0.5.2</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+      <description>See the linked release for changes, signing details and known limitations.</description>
+      <enclosure url="https://github.com/BenjaminD2023/Keytempo/releases/download/v0.5.2/Keytempo-0.5.2-macos-arm64.zip" type="application/octet-stream" length="4337121" sparkle:edSignature="tjkfnGMGXKEORhoFkNBXtM6Z58XCqhgr189uVX4J4OIw+W3iLUkcFkCY6MozuXEomov4kB4OukXOnokwHGI/AQ=="></enclosure>
+    </item>
+    <item>
       <title>Keytempo 0.5.1</title>
       <link>https://github.com/BenjaminD2023/Keytempo/releases/tag/v0.5.1</link>
       <pubDate>Mon, 26 Oct 2026 14:02:54 GMT</pubDate>
@@ -135,6 +145,6 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     </item>
   </channel>
 </rss><!-- sparkle-signatures:
-edSignature: j0UXYvrv1QBupK0WX2dToFx36V66ahglYWnNT/l6Uh4Bq2TPI29wAgC90uH8BK7td7jU7j7S1yuU/aVLB38JCA==
-length: 10655
+edSignature: vvk8qXszJoxu8f7YD5842/W7plUtPqxvgVPm8ArIUFqrM0B1d+tNRNhMIvSRFr5I1DsGn48Gc5lYIHgbYBpbBA==
+length: 11437
 -->
