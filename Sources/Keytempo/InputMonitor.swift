@@ -14,8 +14,8 @@ final class InputMonitor {
     private(set) var currentAppName = "—"
     private(set) var contextSummary = "尚未开始"
     var contextQuerySummary: String { context.snapshot.querySummary }
-    var usesChineseKeyboardEstimate: Bool {
-        chineseKeyboardCompatibilityEnabled && contextSummary == Self.chineseKeyboardCompatibilitySummary
+    var usesGlobalKeyboardEstimate: Bool {
+        globalKeyboardCompatibilityEnabled && contextSummary == Self.globalKeyboardCompatibilitySummary
     }
     private(set) var inputSourceSummary = "—"
     private(set) var status = "尚未开始"
@@ -32,18 +32,18 @@ final class InputMonitor {
     var pendingContextEvents: Int { deferredContext.count }
     private(set) var callbackP99Microseconds: Double?
     var diagnosticsEnabled = false { didSet { lock.lock(); measureCallback = diagnosticsEnabled; lock.unlock() } }
-    var chineseKeyboardCompatibilityEnabled = false {
+    var globalKeyboardCompatibilityEnabled = false {
         didSet {
-            guard oldValue != chineseKeyboardCompatibilityEnabled else { return }
-            context.keyboardCompatibilityEnabled = chineseKeyboardCompatibilityEnabled
-            discardDeferredContext("中文键盘兼容模式已变化")
+            guard oldValue != globalKeyboardCompatibilityEnabled else { return }
+            context.keyboardCompatibilityEnabled = globalKeyboardCompatibilityEnabled
+            discardDeferredContext("全局键盘兼容模式已变化")
             flushInputQuality()
             compositionTracker.reset()
-            if !chineseKeyboardCompatibilityEnabled && status == Self.chineseKeyboardCompatibilitySummary {
+            if !globalKeyboardCompatibilityEnabled && status == Self.globalKeyboardCompatibilitySummary {
                 contextSummary = context.snapshot.reason
                 publish("未知输入上下文")
             }
-            onInterruption?("中文键盘兼容模式已变化")
+            onInterruption?("全局键盘兼容模式已变化")
         }
     }
     var suspectedInputFilteringEnabled = true {
@@ -64,6 +64,7 @@ final class InputMonitor {
         var synthetic = false
         var version: UInt64 = 0
         var disabled = false
+        var modifierChanged = false
     }
     private let lock = NSLock()
     private var ring = [Raw](repeating: Raw(), count: 1024)
@@ -89,7 +90,7 @@ final class InputMonitor {
     private var qualityFlushTask: DispatchWorkItem?
     private static let deferredContextCapacity = 64
     private static let deferredContextMaximumAge = 0.35
-    private static let chineseKeyboardCompatibilitySummary = "中文键盘活动估算；未确认文本框"
+    private static let globalKeyboardCompatibilitySummary = "全局键盘活动估算；未确认文本框"
     private var deferredContext = [Raw]()
     private var deferredContextExpiryTask: DispatchWorkItem?
     private var languagePolicyObserver: NSObjectProtocol?
@@ -101,6 +102,16 @@ final class InputMonitor {
     }()
 
     init() {
+        context.onSourceWillChange = { [weak self] nextVersion, capturedLease in
+            guard let self else { return }
+            // Source notifications arrive after TIS updates its cache. Drain
+            // the previous version with its own source identity before rebinding.
+            // Rotate capture and extract the old batch atomically: input that
+            // arrives during delivery must remain queued for the new source.
+            let batch = self.takePending(advancingTo: nextVersion)
+            self.drain(refreshSource: false, refreshContext: false, capturedBatch: batch,
+                       capturedLeaseOverride: capturedLease)
+        }
         languagePolicyObserver = NotificationCenter.default.addObserver(forName: InputLanguages.policyChanged, object: nil, queue: .main) { [weak self] _ in
             self?.context.invalidate("监控语言设置已变化")
         }
@@ -137,9 +148,9 @@ final class InputMonitor {
                 self.contextSummary = "系统安全输入已启用"
                 self.publish("安全输入：统计不可用")
             }
-            else if self.permitsChineseKeyboardCompatibility(value, time: ProcessInfo.processInfo.systemUptime, version: self.context.version) {
-                self.contextSummary = Self.chineseKeyboardCompatibilitySummary
-                self.publish(Self.chineseKeyboardCompatibilitySummary)
+            else if self.permitsGlobalKeyboardCompatibility(value, time: ProcessInfo.processInfo.systemUptime, version: self.context.version) {
+                self.contextSummary = Self.globalKeyboardCompatibilitySummary
+                self.publish(Self.globalKeyboardCompatibilitySummary)
             }
             else { self.publish(value.editable ? "正在统计 · 估算模式" : "未知输入上下文") }
             if self.running && !secureInputEnabled {
@@ -242,7 +253,8 @@ final class InputMonitor {
     }
 
     private func runTap() {
-        let mask = (CGEventMask(1) << CGEventType.keyDown.rawValue)
+        let mask = (CGEventMask(1) << CGEventType.keyDown.rawValue) |
+                   (CGEventMask(1) << CGEventType.flagsChanged.rawValue)
         let pointer = Unmanaged.passUnretained(self).toOpaque()
         let createdTap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .listenOnly, eventsOfInterest: mask, callback: { _, type, event, raw in
             guard let raw else { return Unmanaged.passUnretained(event) }
@@ -282,13 +294,23 @@ final class InputMonitor {
         }
     }
 
-    private func capture(type: CGEventType, event: CGEvent) {
+    private static func reenableTap(_ port: CFMachPort?) {
+        guard let port, CFMachPortIsValid(port) else { return }
+        CGEvent.tapEnable(tap: port, enable: true)
+    }
+
+    private func capture(type: CGEventType, event: CGEvent,
+                         reenableTap: (CFMachPort?) -> Void = InputMonitor.reenableTap) {
         // Include lock contention in diagnostics. The single monotonic clock
         // read remains cheap when detailed sampling is disabled.
         let start = DispatchTime.now().uptimeNanoseconds
         lock.lock()
         let measure = measureCallback
         guard accepting else { lock.unlock(); return }
+        let disabled = type == .tapDisabledByTimeout || type == .tapDisabledByUserInput
+        // Resume on the tap thread immediately, even if the main queue or ring
+        // is busy. Repeated OS suspensions do not consume the creation budget.
+        if disabled { reenableTap(tap) }
         if buffered == ring.count { dropped &+= 1 }
         else {
             let slot = (readIndex + buffered) % ring.count
@@ -297,7 +319,7 @@ final class InputMonitor {
             // public state tables. This excludes known private-source input;
             // generators using either public state remain indistinguishable.
             let sourceState = Int32(truncatingIfNeeded: event.getIntegerValueField(.eventSourceStateID))
-            ring[slot] = Raw(time: Double(event.timestamp) / 1_000_000_000, key: event.getIntegerValueField(.keyboardEventKeycode), flags: event.flags.rawValue, repeated: event.getIntegerValueField(.keyboardEventAutorepeat) != 0, synthetic: sourceState != 0 && sourceState != 1, version: callbackVersion, disabled: type == .tapDisabledByTimeout || type == .tapDisabledByUserInput)
+            ring[slot] = Raw(time: Double(event.timestamp) / 1_000_000_000, key: event.getIntegerValueField(.keyboardEventKeycode), flags: event.flags.rawValue, repeated: event.getIntegerValueField(.keyboardEventAutorepeat) != 0, synthetic: sourceState != 0 && sourceState != 1, version: callbackVersion, disabled: disabled, modifierChanged: type == .flagsChanged)
             buffered += 1
         }
         lock.unlock()
@@ -320,7 +342,7 @@ final class InputMonitor {
 
     /// Shared by the live drain and regression checks; taking a batch clears
     /// every pending slot and the overflow marker atomically.
-    private func takePending() -> Batch {
+    private func takePending(advancingTo nextVersion: UInt64? = nil) -> Batch {
         lock.lock()
         var events = [Raw]()
         events.reserveCapacity(buffered)
@@ -330,6 +352,7 @@ final class InputMonitor {
             buffered -= 1
         }
         let lost = dropped; dropped = 0
+        if let nextVersion { callbackVersion = nextVersion }
         let durations = diagnosticsEnabled && measureCount > 0 ? Array(measurements.prefix(measureCount)) : []
         lock.unlock()
         return Batch(events: events, lost: lost, durations: durations)
@@ -348,9 +371,14 @@ final class InputMonitor {
         return Batch(events: events, lost: lost, durations: [])
     }
 
-    private func drain() {
+    private func drain(refreshSource: Bool = true, refreshContext: Bool = true, capturedBatch: Batch? = nil,
+                       capturedLeaseOverride: FocusContext.Snapshot? = nil) {
         guard running else { return }
-        let batch = takePending()
+        // Vorssaint can switch via TIS directly and consume Caps Lock/F18.
+        // Refresh on delivered batches instead of relying on seeing its trigger
+        // or on a timely distributed source notification. Never query in capture.
+        if refreshSource { InputLanguages.refreshCurrent() }
+        let batch = capturedBatch ?? takePending()
         let events = batch.events, lost = batch.lost, durations = batch.durations
         if !durations.isEmpty { callbackP99Microseconds = Double(durations.sorted()[min(durations.count - 1, Int(Double(durations.count) * 0.99))]) / 1000 }
         if lost > 0 {
@@ -370,11 +398,11 @@ final class InputMonitor {
         if !CGPreflightListenEventAccess() || !AXIsProcessTrusted() {
             refreshPermissions()
         }
-        let capturedLease = context.snapshot
+        let capturedLease = capturedLeaseOverride ?? context.snapshot
         let now = ProcessInfo.processInfo.systemUptime
         // Expired eligibility is withheld before this batch is classified.
         // Same-version input may wait briefly for a fresh identity validation.
-        context.prepareForBatch(at: now)
+        if refreshContext { context.prepareForBatch(at: now) }
         let snapshot = context.snapshot
         let date = Date()
         replayDeferredContext(snapshot: snapshot, contextVersion: context.version, now: now, date: date, followingEvents: events)
@@ -383,7 +411,7 @@ final class InputMonitor {
             _ = process(event, snapshot: snapshot, contextVersion: context.version, now: now, date: date,
                         capturedLease: capturedLease)
         }
-        context.prepareForEvent()
+        if refreshContext { context.prepareForEvent() }
     }
 
     /// Both live and context-confirmed events use the same classification and
@@ -393,6 +421,23 @@ final class InputMonitor {
                          now: Double, date: Date, mayDefer: Bool = true,
                          capturedLease: FocusContext.Snapshot? = nil) -> Bool {
         if event.disabled { recoverTap(); return false }
+        if event.modifierChanged {
+            // Shift/Option are normal text modifiers. Caps Lock, Globe/Fn and
+            // shortcut modifiers can end an IME hypothesis even when switching
+            // fails or leaves the selected input source unchanged.
+            if Self.breaksComposition(event) {
+                if mayDefer && !deferredContext.isEmpty &&
+                    Self.mayWaitForContext(event, contextVersion: contextVersion, now: now) &&
+                    deferredContext.count < Self.deferredContextCapacity {
+                    deferredContext.append(event)
+                } else {
+                    flushInputQuality()
+                    compositionTracker.reset()
+                    onInterruption?("输入切换键或快捷键修饰键已变化")
+                }
+            }
+            return false
+        }
         // Delivery delay does not revoke an event captured inside a lease.
         // A real invalidation must still reject the entire previous version.
         var snapshot: FocusContext.Snapshot
@@ -404,25 +449,28 @@ final class InputMonitor {
         }
         expireDeferredContext(now: now)
         let modifiers = CGEventFlags(rawValue: event.flags)
+        var keyboardEstimate = false
         let physical = Self.classify(key: event.key, flags: event.flags, synthetic: event.synthetic,
                                      editable: true, inputMethod: false, valid: true)
         if !event.repeated && now >= event.time &&
             (physical.0 == .textEntry || physical.0 == .editing) &&
-            permitsChineseKeyboardCompatibility(snapshot, time: event.time, version: contextVersion) &&
+            permitsGlobalKeyboardCompatibility(snapshot, time: event.time, version: contextVersion) &&
             event.version == contextVersion {
             // This lease permits a keyboard-activity estimate only. It never
             // changes AX metadata or establishes text insertion/character output.
             snapshot = FocusContext.Snapshot(version: snapshot.version, bundleID: snapshot.bundleID,
                                              appName: snapshot.appName, role: snapshot.role, editable: true,
-                                             ready: true, reason: Self.chineseKeyboardCompatibilitySummary,
-                                             expires: snapshot.identityExpires, inputMethod: false,
-                                             languageCode: snapshot.languageCode, validSince: snapshot.validSince,
+                                             ready: true, reason: Self.globalKeyboardCompatibilitySummary,
+                                             expires: snapshot.identityExpires, inputMethod: snapshot.inputMethod,
+                                             languageCode: snapshot.languageCode,
+                                             inputSourceID: snapshot.inputSourceID, inputModeID: snapshot.inputModeID,
+                                             validSince: snapshot.validSince,
                                              querySummary: snapshot.querySummary)
-            contextSummary = Self.chineseKeyboardCompatibilitySummary
-            publish(Self.chineseKeyboardCompatibilitySummary)
+            keyboardEstimate = true
+            contextSummary = Self.globalKeyboardCompatibilitySummary
+            publish(Self.globalKeyboardCompatibilitySummary)
         }
-        let chineseCompatibilitySource = chineseKeyboardCompatibilityEnabled && snapshot.inputMethod && snapshot.languageCode == "zh"
-        if mayDefer && !chineseCompatibilitySource && !snapshot.ready && hasInputPermission && hasAccessibilityPermission &&
+        if mayDefer && !snapshot.ready && hasInputPermission && hasAccessibilityPermission &&
             Self.mayWaitForContext(event, contextVersion: contextVersion, now: now) {
             if deferredContext.count < Self.deferredContextCapacity {
                 deferredContext.append(event)
@@ -454,13 +502,23 @@ final class InputMonitor {
             onInterruption?("当前输入源语言已排除"); publish("当前输入源语言已排除")
             return false
         }
-        let decision = compositionTracker.classify(
+        var decision = compositionTracker.classify(
             key: event.key, time: event.time, contextVersion: event.version,
             command: modifiers.contains(.maskCommand), control: modifiers.contains(.maskControl),
             shift: modifiers.contains(.maskShift), option: modifiers.contains(.maskAlternate),
-            synthetic: event.synthetic, editable: snapshot.editable, inputMethod: snapshot.inputMethod,
+            synthetic: event.synthetic, editable: snapshot.editable, inputMethod: snapshot.inputMethod && !keyboardEstimate,
             valid: snapshot.permits(time: event.time, version: event.version) &&
                 event.version == contextVersion && hasInputPermission && hasAccessibilityPermission)
+        if globalKeyboardCompatibilityEnabled,
+           decision == .classified(.unknown, .unknown),
+           snapshot.editable, snapshot.permits(time: event.time, version: event.version),
+           event.version == contextVersion && hasInputPermission && hasAccessibilityPermission,
+           physical.0 == .textEntry || physical.0 == .editing {
+            // An IME can remain selected while Caps Lock puts it in Latin
+            // passthrough. Printable digits still represent keyboard activity
+            // when no composition hypothesis exists to establish their purpose.
+            decision = .classified(physical.0, physical.1)
+        }
         guard case let .classified(category, evidence) = decision else {
             // Valid spaces close a quality hypothesis without adding a key or
             // splitting the actual elapsed interval between accepted operations.
@@ -468,12 +526,11 @@ final class InputMonitor {
             return false
         }
         if category == .unknown { unknownEvents &+= 1 }
-        let inputSource = InputLanguages.current
         let input = ClassifiedInput(time: event.time, date: date.addingTimeInterval(event.time - now),
                                     context: event.version, category: category, evidence: evidence,
                                     source: .global, language: snapshot.languageCode, applicationID: snapshot.bundleID,
-                                    inputMethodID: inputSource.identifier + "|" + inputSource.modeIdentifier,
-                                    usesInputMethod: inputSource.inputMethod)
+                                    inputMethodID: snapshot.inputSourceID + "|" + snapshot.inputModeID,
+                                    usesInputMethod: snapshot.inputMethod)
         if suspectedInputFilteringEnabled && category == .textEntry && evidence == .probable {
             deliverInputQuality(inputQuality.observe(input, physicalKey: event.key))
         } else {
@@ -483,10 +540,9 @@ final class InputMonitor {
         return category.isEffective && evidence == .probable
     }
 
-    private func permitsChineseKeyboardCompatibility(_ snapshot: FocusContext.Snapshot,
+    private func permitsGlobalKeyboardCompatibility(_ snapshot: FocusContext.Snapshot,
                                                      time: Double, version: UInt64) -> Bool {
-        chineseKeyboardCompatibilityEnabled && !snapshot.ready && snapshot.inputMethod &&
-            snapshot.languageCode == "zh" && hasInputPermission && hasAccessibilityPermission &&
+        globalKeyboardCompatibilityEnabled && !snapshot.ready && hasInputPermission && hasAccessibilityPermission &&
             !excluded.contains(snapshot.bundleID) && snapshot.bundleID != Bundle.main.bundleIdentifier &&
             InputLanguages.policy.allows(languageCode: snapshot.languageCode) &&
             snapshot.permitsIdentity(time: time, version: version)
@@ -498,7 +554,11 @@ final class InputMonitor {
         return !event.disabled && !event.repeated && !event.synthetic && event.key != 49 &&
             event.version == contextVersion && event.time.isFinite && event.time >= 0 &&
             now >= event.time && now - event.time < deferredContextMaximumAge &&
-            (candidate.0 == .textEntry || candidate.0 == .editing)
+            (event.modifierChanged || candidate.0 == .textEntry || candidate.0 == .editing)
+    }
+
+    private static func breaksComposition(_ event: Raw) -> Bool {
+        [54, 55, 57, 59, 62, 63].contains(event.key)
     }
 
     private func scheduleDeferredContextExpiry(now: Double) {
@@ -566,7 +626,9 @@ final class InputMonitor {
         deferredContext.removeAll(keepingCapacity: true)
         deferredContextExpiryTask?.cancel(); deferredContextExpiryTask = nil
         for event in pending {
-            if process(event, snapshot: snapshot, contextVersion: contextVersion, now: now, date: date, mayDefer: false) {
+            let accepted = process(event, snapshot: snapshot, contextVersion: contextVersion, now: now, date: date, mayDefer: false)
+            if event.modifierChanged { continue }
+            if accepted {
                 deferredAcceptedEvents &+= 1
             } else {
                 deferredDiscardedEvents &+= 1
@@ -708,7 +770,7 @@ final class InputMonitor {
         monitor.suspectedInputFilteringEnabled = false
         expect(forwarded == before + 2 && monitor.inputQuality.bufferedCount == 0 && monitor.qualityFlushTask == nil, "disabling suspected filtering flushes its pending prefix")
         expect(interruptions.contains("疑似异常输入过滤设置已变化"), "heuristic policy change interrupts timing")
-        return failures + exerciseDeferredContextChecks() + exerciseChineseKeyboardCompatibilityChecks()
+        return failures + exerciseDeferredContextChecks() + exerciseGlobalKeyboardCompatibilityChecks() + exerciseCaptureRecoveryChecks()
     }
 
     /// Fake metadata exercises the live classification/replay helpers without
@@ -879,7 +941,7 @@ final class InputMonitor {
         }
     }
 
-    private static func exerciseChineseKeyboardCompatibilityChecks() -> [String] {
+    private static func exerciseGlobalKeyboardCompatibilityChecks() -> [String] {
         InputLanguages.withPolicyForChecks(nil) {
             var failures = [String]()
             func expect(_ condition: @autoclosure () -> Bool, _ name: String) { if !condition() { failures.append(name) } }
@@ -904,8 +966,8 @@ final class InputMonitor {
             func makeMonitor() -> InputMonitor {
                 let monitor = InputMonitor()
                 monitor.hasInputPermission = true; monitor.hasAccessibilityPermission = true
-                monitor.chineseKeyboardCompatibilityEnabled = true
-                expect(monitor.context.keyboardCompatibilityEnabled, "Chinese compatibility updates the identity-lease capture policy")
+                monitor.globalKeyboardCompatibilityEnabled = true
+                expect(monitor.context.keyboardCompatibilityEnabled, "global compatibility updates the identity-lease capture policy")
                 return monitor
             }
             let unresolved = sample()
@@ -921,21 +983,20 @@ final class InputMonitor {
                 }
                 monitor.flushPendingInput()
                 let measured = engine.snapshot(now: start + 0.8)
-                expect(forwarded.map(\.time) == [start, start + 0.2, start + 0.4, start + 0.6, start + 0.8], "Chinese compatibility preserves physical counts and original timing while excluding spaces")
-                expect(forwarded.allSatisfy({ $0.evidence == .probable && $0.source == .global && $0.language == "zh" && $0.committedCharacters == nil }), "Chinese compatibility remains probable global activity without character coverage")
-                expect(measured.probable.keys == 5 && measured.probable.intervals == 4 && abs(measured.probable.seconds - 0.8) < 0.000_01, "Chinese keyboard estimate uses accepted n-minus-one intervals")
-                expect(measured.probable.rhythmKPM.map({ abs($0 - 300) < 0.001 }) == true && measured.probable.characters == 0 && measured.probable.characterCPM == nil && measured.confirmed.keys == 0, "Chinese compatibility yields estimated speed without CPM or confirmed input")
-                expect(monitor.contextSummary == chineseKeyboardCompatibilitySummary && monitor.status == chineseKeyboardCompatibilitySummary, "Chinese compatibility identifies the unconfirmed-textbox estimate")
+                expect(forwarded.map(\.time) == [start, start + 0.2, start + 0.4, start + 0.6, start + 0.8], "global compatibility preserves physical counts and original timing while excluding spaces")
+                expect(forwarded.allSatisfy({ $0.evidence == .probable && $0.source == .global && $0.language == "zh" && $0.committedCharacters == nil }), "global compatibility remains probable global activity without character coverage")
+                expect(measured.probable.keys == 5 && measured.probable.intervals == 4 && abs(measured.probable.seconds - 0.8) < 0.000_01, "global keyboard estimate uses accepted n-minus-one intervals")
+                expect(measured.probable.rhythmKPM.map({ abs($0 - 300) < 0.001 }) == true && measured.probable.characters == 0 && measured.probable.characterCPM == nil && measured.confirmed.keys == 0, "global compatibility yields estimated speed without CPM or confirmed input")
+                expect(monitor.contextSummary == globalKeyboardCompatibilitySummary && monitor.status == globalKeyboardCompatibilitySummary, "global compatibility identifies the unconfirmed-textbox estimate")
                 monitor.replayDeferredContext(snapshot: sample(ready: true, editable: true), contextVersion: 1, now: start + 0.9, date: date)
-                expect(monitor.pendingContextEvents == 0 && monitor.deferredAcceptedEvents == 0 && forwarded.count == 5, "Chinese compatibility never duplicates activity through AX deferral replay")
+                expect(monitor.pendingContextEvents == 0 && monitor.deferredAcceptedEvents == 0 && forwarded.count == 5, "global compatibility never duplicates activity through AX deferral replay")
             }
 
-            for boundary in 0..<12 {
+            for boundary in [0, 3, 4, 5, 6, 7, 8, 9, 10, 11] {
                 let monitor = makeMonitor()
                 var effective = 0
                 monitor.onInput = { if $0.category.isEffective { effective += 1 } }
                 let snapshot = sample(version: boundary == 5 ? 2 : 1, ready: boundary == 0,
-                                      ime: boundary != 1, language: boundary == 2 ? "en" : "zh",
                                       identityReady: boundary != 3,
                                       identityExpires: boundary == 4 ? start - 0.1 : nil,
                                       validSince: boundary == 6 ? start + 0.1 : 0,
@@ -946,22 +1007,35 @@ final class InputMonitor {
                 monitor.process(raw(offset: boundary == 9 ? 0.1 : 0), snapshot: snapshot,
                                 contextVersion: boundary == 5 ? 2 : 1, now: start, date: date, mayDefer: false)
                 monitor.flushPendingInput()
-                expect(effective == 0 && monitor.pendingContextEvents == 0, "Chinese compatibility rejects resolved noneditable other source stale identity version clock permission and mode-editor boundaries")
+                expect(effective == 0 && monitor.pendingContextEvents == 0, "global compatibility rejects resolved noneditable stale identity version clock permission and mode-editor boundaries")
+            }
+            for (language, ime) in [("en", false), ("zh", true), ("ja", true), ("ko", true), ("fr", false), ("und", false)] {
+                let monitor = makeMonitor()
+                var forwarded = [ClassifiedInput]()
+                monitor.onInput = { forwarded.append($0) }
+                var source = sample(ime: ime, language: language)
+                source.inputSourceID = "test." + language
+                source.inputModeID = "mode"
+                monitor.process(raw(), snapshot: source,
+                                contextVersion: 1, now: start, date: date)
+                monitor.process(raw(18, offset: 0.08), snapshot: source,
+                                contextVersion: 1, now: start + 0.08, date: date)
+                monitor.flushPendingInput()
+                expect(forwarded.count == 2 && forwarded.allSatisfy({ $0.language == language && $0.evidence == .probable &&
+                    $0.inputMethodID == "test." + language + "|mode" && $0.usesInputMethod == ime && $0.committedCharacters == nil }) &&
+                    monitor.deferredAcceptedEvents == 0 && monitor.pendingContextEvents == 0 &&
+                    monitor.contextSummary == globalKeyboardCompatibilitySummary,
+                    "global fallback counts letters and digits for every source and retains that source's metadata")
             }
             do {
                 let monitor = makeMonitor()
                 var forwarded = [ClassifiedInput]()
                 monitor.onInput = { forwarded.append($0) }
-                monitor.process(raw(), snapshot: sample(ime: false, language: "en"),
+                monitor.process(raw(18), snapshot: sample(ready: true, editable: true),
                                 contextVersion: 1, now: start, date: date)
-                expect(monitor.pendingContextEvents == 1 && forwarded.isEmpty, "Chinese compatibility preserves normal English AX transition buffering")
-                monitor.replayDeferredContext(snapshot: sample(ready: true, editable: true, ime: false, language: "en"),
-                                              contextVersion: 1, now: start + 0.1, date: date)
                 monitor.flushPendingInput()
-                expect(forwarded.count == 1 && forwarded[0].language == "en" && forwarded[0].evidence == .probable &&
-                       monitor.deferredAcceptedEvents == 1 && monitor.pendingContextEvents == 0 &&
-                       monitor.contextSummary != chineseKeyboardCompatibilitySummary,
-                       "English still requires confirmed editable metadata and never uses the Chinese fallback")
+                expect(forwarded.count == 1 && forwarded[0].category == .textEntry,
+                       "global mode counts a leading digit when a selected IME is in Latin passthrough")
             }
 
             for key: Int64 in [49,123,124,125,126,53,115,116,119,121,36,48,76,122] {
@@ -971,7 +1045,7 @@ final class InputMonitor {
                 monitor.process(raw(), snapshot: unresolved, contextVersion: 1, now: start, date: date)
                 monitor.process(raw(key, offset: 0.2), snapshot: unresolved, contextVersion: 1, now: start + 0.2, date: date)
                 monitor.flushPendingInput()
-                expect(effective == 1 && monitor.pendingContextEvents == 0, "Chinese compatibility excludes space navigation and ambiguous actions after printable activity")
+                expect(effective == 1 && monitor.pendingContextEvents == 0, "global compatibility excludes space navigation and ambiguous actions after printable activity")
             }
             for boundary in 0..<4 {
                 let monitor = makeMonitor()
@@ -981,17 +1055,17 @@ final class InputMonitor {
                                     synthetic: boundary == 2, repeated: boundary == 3),
                                 snapshot: unresolved, contextVersion: 1, now: start, date: date)
                 monitor.flushPendingInput()
-                expect(effective == 0 && monitor.pendingContextEvents == 0, "Chinese compatibility retains shortcut generated and autorepeat exclusions")
+                expect(effective == 0 && monitor.pendingContextEvents == 0, "global compatibility retains shortcut generated and autorepeat exclusions")
             }
             do {
                 let monitor = makeMonitor()
                 var effective = 0
                 monitor.onInput = { if $0.category.isEffective { effective += 1 } }
                 InputLanguages.withPolicyForChecks(["en"]) {
-                    monitor.process(raw(), snapshot: unresolved, contextVersion: 1, now: start, date: date)
+                    monitor.process(raw(), snapshot: unresolved, contextVersion: 1, now: start, date: date, mayDefer: false)
                     monitor.flushPendingInput()
                 }
-                expect(effective == 0 && monitor.pendingContextEvents == 0, "Chinese compatibility honors the monitored-language policy")
+                expect(effective == 0 && monitor.pendingContextEvents == 0, "global compatibility honors the monitored-language policy")
             }
             do {
                 let monitor = InputMonitor()
@@ -999,14 +1073,84 @@ final class InputMonitor {
                 var effective = 0
                 monitor.onInput = { if $0.category.isEffective { effective += 1 } }
                 monitor.process(raw(), snapshot: unresolved, contextVersion: 1, now: start, date: date)
-                expect(monitor.pendingContextEvents == 1 && !monitor.chineseKeyboardCompatibilityEnabled, "Chinese compatibility is opt-in and preserves strict-mode deferral")
-                monitor.chineseKeyboardCompatibilityEnabled = true
+                expect(monitor.pendingContextEvents == 1 && !monitor.globalKeyboardCompatibilityEnabled, "global compatibility is opt-in and preserves strict-mode deferral")
+                monitor.globalKeyboardCompatibilityEnabled = true
                 monitor.process(raw(45, offset: 0.1), snapshot: unresolved, contextVersion: 1, now: start + 0.1, date: date)
                 monitor.flushPendingInput()
                 monitor.replayDeferredContext(snapshot: sample(ready: true, editable: true), contextVersion: 1, now: start + 0.2, date: date)
                 expect(effective == 1 && monitor.deferredDiscardedEvents == 1 && monitor.pendingContextEvents == 0 && monitor.deferredAcceptedEvents == 0, "mode changes discard prior unresolved metadata before keyboard activity starts")
-                monitor.chineseKeyboardCompatibilityEnabled = false
-                expect(monitor.status == "未知输入上下文" && !monitor.context.keyboardCompatibilityEnabled, "disabling Chinese compatibility removes its active status and identity policy")
+                monitor.globalKeyboardCompatibilityEnabled = false
+                expect(monitor.status == "未知输入上下文" && !monitor.context.keyboardCompatibilityEnabled, "disabling global compatibility removes its active status and identity policy")
+            }
+            return failures + exerciseModifierChecks()
+        }
+    }
+
+    private static func exerciseModifierChecks() -> [String] {
+        InputLanguages.withPolicyForChecks(nil) {
+            var failures = [String]()
+            func expect(_ condition: @autoclosure () -> Bool, _ name: String) { if !condition() { failures.append(name) } }
+            let start = ProcessInfo.processInfo.systemUptime
+            let date = Date()
+            let snapshot = FocusContext.Snapshot(version: 1, bundleID: "test.editor", appName: "Editor",
+                role: kAXTextAreaRole, editable: true, ready: true, reason: "fixture", expires: start + 10,
+                inputMethod: true, languageCode: "zh", inputSourceID: "test.pinyin", inputModeID: "pinyin")
+            func raw(_ key: Int64, _ offset: Double, flags: CGEventFlags = [], modifier: Bool = false) -> Raw {
+                Raw(time: start + offset, key: key, flags: flags.rawValue, version: 1, modifierChanged: modifier)
+            }
+            for key: Int64 in [54, 55, 57, 59, 62, 63] {
+                let monitor = InputMonitor()
+                monitor.hasInputPermission = true; monitor.hasAccessibilityPermission = true
+                var forwarded = [ClassifiedInput]()
+                monitor.onInput = { forwarded.append($0) }
+                monitor.process(raw(0, 0), snapshot: snapshot, contextVersion: 1, now: start, date: date)
+                expect(monitor.compositionTracker.isActive && forwarded.isEmpty, "initial IME letter waits in the quality prefix")
+                monitor.process(raw(key, 0.05, modifier: true), snapshot: snapshot, contextVersion: 1, now: start + 0.05, date: date)
+                expect(!monitor.compositionTracker.isActive && forwarded.count == 1 && monitor.unknownEvents == 0,
+                       "no-op switch and shortcut modifier changes preserve valid input without counting the modifier")
+                monitor.process(raw(45, 0.1), snapshot: snapshot, contextVersion: 1, now: start + 0.1, date: date)
+                monitor.flushPendingInput()
+                expect(forwarded.map(\.time) == [start, start + 0.1] && forwarded.allSatisfy({ $0.category == .textEntry }),
+                       "typing resumes immediately after no-op Caps Lock Globe or Super-key release")
+            }
+            for key: Int64 in [56, 60, 58, 61] {
+                let monitor = InputMonitor()
+                monitor.hasInputPermission = true; monitor.hasAccessibilityPermission = true
+                monitor.process(raw(0, 0), snapshot: snapshot, contextVersion: 1, now: start, date: date)
+                monitor.process(raw(key, 0.05, modifier: true), snapshot: snapshot, contextVersion: 1, now: start + 0.05, date: date)
+                expect(monitor.compositionTracker.isActive && monitor.inputQuality.bufferedCount == 1 && monitor.unknownEvents == 0,
+                       "Shift and Option flags alone preserve ordinary typing continuity")
+                monitor.flushPendingInput()
+            }
+            do {
+                let monitor = InputMonitor()
+                monitor.hasInputPermission = true; monitor.hasAccessibilityPermission = true
+                monitor.suspectedInputFilteringEnabled = false
+                var forwarded = [ClassifiedInput]()
+                monitor.onInput = { forwarded.append($0) }
+                // Super-key shortcuts remain commands; its release must not
+                // leave ordinary letters carrying a cached modifier state.
+                monitor.process(raw(0, 0, flags: [.maskCommand, .maskControl, .maskShift, .maskAlternate]),
+                                snapshot: snapshot, contextVersion: 1, now: start, date: date)
+                monitor.process(raw(55, 0.05, modifier: true), snapshot: snapshot, contextVersion: 1, now: start + 0.05, date: date)
+                monitor.process(raw(45, 0.1), snapshot: snapshot, contextVersion: 1, now: start + 0.1, date: date)
+                expect(forwarded.map(\.category) == [.command, .textEntry], "Vorssaint Super shortcuts are excluded and following ordinary typing is accepted")
+                expect(forwarded.last?.inputMethodID == "test.pinyin|pinyin", "source attribution comes from the event's focus lease instead of the live TIS cache")
+            }
+            do {
+                let monitor = InputMonitor()
+                monitor.hasInputPermission = true; monitor.hasAccessibilityPermission = true
+                let unresolved = FocusContext.Snapshot(version: 1, bundleID: snapshot.bundleID, appName: snapshot.appName,
+                    role: "", editable: false, ready: false, reason: "fixture", expires: 0, inputMethod: true, languageCode: "zh")
+                var forwarded = [ClassifiedInput]()
+                monitor.onInput = { forwarded.append($0) }
+                monitor.process(raw(0, 0), snapshot: unresolved, contextVersion: 1, now: start, date: date)
+                monitor.process(raw(57, 0.04, modifier: true), snapshot: unresolved, contextVersion: 1, now: start + 0.04, date: date)
+                monitor.process(raw(45, 0.08), snapshot: unresolved, contextVersion: 1, now: start + 0.08, date: date)
+                monitor.replayDeferredContext(snapshot: snapshot, contextVersion: 1, now: start + 0.12, date: date)
+                monitor.flushPendingInput()
+                expect(forwarded.map(\.time) == [start, start + 0.08] && monitor.deferredAcceptedEvents == 2 && monitor.deferredDiscardedEvents == 0,
+                       "a no-op Caps Lock between deferred letters neither drops nor duplicates them")
             }
             return failures
         }
@@ -1017,27 +1161,63 @@ final class InputMonitor {
         return MetadataClassifier.classify(key: key, command: modifiers.contains(.maskCommand), control: modifiers.contains(.maskControl), synthetic: synthetic, editable: editable, inputMethod: inputMethod, valid: valid)
     }
 
+    /// Constructed events exercise recovery and the source-rotation race
+    /// without opening a tap, posting keyboard events or requesting permission.
+    private static func exerciseCaptureRecoveryChecks() -> [String] {
+        var failures = [String]()
+        func expect(_ condition: @autoclosure () -> Bool, _ name: String) { if !condition() { failures.append(name) } }
+        guard let event = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true) else {
+            return ["construct capture recovery fixture"]
+        }
+        let monitor = InputMonitor()
+        monitor.accepting = true
+        var resumed = 0
+        for index in 0..<6 {
+            monitor.capture(type: index.isMultiple(of: 2) ? .tapDisabledByTimeout : .tapDisabledByUserInput,
+                            event: event, reenableTap: { _ in resumed += 1 })
+            expect(resumed == index + 1 && monitor.takePending().events.first?.disabled == true,
+                   "every tap suspension resumes synchronously before main-thread delivery")
+        }
+        expect(monitor.retryCount == 0 && monitor.retryTask == nil && monitor.tapThread == nil,
+               "repeated suspensions neither exhaust creation retries nor start capture in checks")
+        for _ in 0..<1024 { monitor.capture(type: .keyDown, event: event) }
+        monitor.capture(type: .tapDisabledByTimeout, event: event, reenableTap: { _ in resumed += 1 })
+        expect(resumed == 7 && monitor.buffered == 1024 && monitor.dropped == 1,
+               "tap resumes even when its disabled marker cannot enter a full ring")
+        _ = monitor.takePending()
+        monitor.capture(type: .flagsChanged, event: event)
+        expect(monitor.takePending().events.first?.modifierChanged == true,
+               "capture distinguishes flagsChanged from countable keyDown events")
+        monitor.capture(type: .keyDown, event: event)
+        let old = monitor.takePending(advancingTo: 2)
+        // Reproduce a callback arriving while the old batch is being delivered.
+        monitor.capture(type: .keyDown, event: event)
+        let next = monitor.takePending()
+        expect(old.events.count == 1 && old.events.first?.version == 1 &&
+               next.events.count == 1 && next.events.first?.version == 2 && next.lost == 0,
+               "atomic source rotation retains callbacks arriving during old-source delivery")
+        monitor.accepting = false
+        return failures
+    }
+
     private func recoverTap() {
         discardDeferredContext("事件监听中断；未确认输入已丢弃")
         flushInputQuality()
         compositionTracker.reset()
         onInterruption?("系统暂停了事件监听")
         publish("事件监听中断")
-        guard running && retryCount < 3 && retryTask == nil else { return }
-        retryCount += 1
-        let task = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            self.retryTask = nil
-            guard self.running && CGPreflightListenEventAccess() else { self.refreshPermissions(); return }
-            self.lock.lock(); let port = self.tap; self.lock.unlock()
-            if let port, CFMachPortIsValid(port) {
-                CGEvent.tapEnable(tap: port, enable: true)
-                self.context.invalidate("监听恢复；重新确认上下文")
-                self.publish("监听已恢复")
-            }
+        guard running else { return }
+        refreshPermissions()
+        guard hasInputPermission else { return }
+        lock.lock(); let port = tap; lock.unlock()
+        if let port, CFMachPortIsValid(port) {
+            CGEvent.tapEnable(tap: port, enable: true)
+            // Losing keyboard delivery does not itself change the focused
+            // field. Preserve its original lease while breaking timing above.
+            publish("监听已恢复")
+        } else {
+            launchTap()
         }
-        retryTask = task
-        DispatchQueue.main.asyncAfter(deadline: .now() + Double(retryCount), execute: task)
     }
 
     private func retryCreation() {

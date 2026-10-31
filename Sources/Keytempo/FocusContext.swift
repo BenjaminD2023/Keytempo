@@ -15,6 +15,8 @@ final class FocusContext {
         let expires: Double
         let inputMethod: Bool
         let languageCode: String
+        var inputSourceID: String = ""
+        var inputModeID: String = ""
         var validSince: Double = 0
         var querySummary: String = ""
         var identityReady = false
@@ -61,6 +63,7 @@ final class FocusContext {
 
     var onInvalidate: ((UInt64, String) -> Void)?
     var onResolved: ((Snapshot) -> Void)?
+    var onSourceWillChange: ((UInt64, Snapshot) -> Void)?
     var keyboardCompatibilityEnabled = false
     private(set) var version: UInt64 = 1
     private(set) var snapshot = Snapshot(version: 1, bundleID: "", appName: "", role: "", editable: false, ready: false, reason: "正在确认输入上下文", expires: 0, inputMethod: false, languageCode: "und")
@@ -81,6 +84,7 @@ final class FocusContext {
     private var renewingExpiredLease = false
     private var identity: Identity?
     private var refreshingIdentity = false
+    private var changingSource = false
 
     func start() {
         guard !active else { return }
@@ -90,7 +94,11 @@ final class FocusContext {
             self?.invalidate("前台应用已变化")
         }
         sourceObserver = NotificationCenter.default.addObserver(forName: InputLanguages.sourceChanged, object: nil, queue: .main) { [weak self] _ in
-            self?.invalidate("输入源已变化")
+            guard let self else { return }
+            let app = NSWorkspace.shared.frontmostApplication
+            self.changeSource(InputLanguages.current, frontPID: app?.processIdentifier ?? 0,
+                              frontBundleID: app?.bundleIdentifier ?? "",
+                              at: ProcessInfo.processInfo.systemUptime)
         }
         invalidate("正在确认输入上下文")
     }
@@ -109,11 +117,82 @@ final class FocusContext {
         invalidate(reason, query: query, resetFailures: true)
     }
 
-    private func invalidate(_ reason: String, query: Bool, resetFailures: Bool) {
+    /// A source switch does not itself change the current field. Keep its
+    /// positive or negative evidence and refresh only public app identity;
+    /// expired AX evidence stays withheld until a fresh query validates it.
+    private func changeSource(_ source: InputLanguages.Source, frontPID: pid_t,
+                              frontBundleID: String, at now: Double) {
+        if (metadata?.source ?? identity?.source) == source { return }
+        guard now.isFinite, now >= snapshot.validSince,
+              matchesFrontIdentity(pid: frontPID, bundleID: frontBundleID) else {
+            invalidate("输入源已变化", query: true, resetFailures: true, at: now)
+            return
+        }
+        // The monitor drains captured keys with their previous source before
+        // the callback version and source metadata advance together. An idle
+        // period may have expired public identity, so renew it first to avoid
+        // losing the first old-version batch in keyboard-activity mode.
+        let capturedLease = snapshot
+        changingSource = true
+        if snapshot.ready && now > snapshot.expires { beginLeaseRenewal() }
+        snapshot.identityReady = true
+        snapshot.identityExpires = now + 0.75
+        snapshot.keyboardActivityBlocked = snapshot.keyboardActivityBlocked ||
+            (snapshot.ready && !snapshot.editable) || Self.isModeEditor(frontBundleID)
+        let sourceVersion = version
+        onSourceWillChange?(version &+ 1, capturedLease)
+        changingSource = false
+        // Delivery can discover a permission/security boundary. Such a real
+        // invalidation takes precedence over the source-only handoff.
+        guard version == sourceVersion,
+              matchesFrontIdentity(pid: frontPID, bundleID: frontBundleID) else {
+            requestQuery()
+            return
+        }
+        retryWork?.cancel()
+        retryWork = nil
+        retryAfter = 0
+        failureCount = 0
+        // This is the same app/field. A delayed OS callback delivered after
+        // the atomic version rotation can carry a pre-switch timestamp; retain
+        // its original time bounds instead of silently dropping it.
+        validSince = snapshot.validSince
+        version &+= 1
+        let previous = snapshot
+        metadata = metadata.map {
+            Metadata(pid: $0.pid, bundleID: $0.bundleID, role: $0.role, subrole: $0.subrole,
+                     enabled: $0.enabled, editEvidence: $0.editEvidence, source: source)
+        }
+        identity = Identity(pid: frontPID, bundleID: frontBundleID, source: source)
+        snapshot = Snapshot(version: version, bundleID: previous.bundleID, appName: previous.appName,
+                            role: previous.role, editable: previous.editable, ready: previous.ready, reason: previous.reason,
+                            expires: previous.expires, inputMethod: source.inputMethod,
+                            languageCode: source.languageCode, inputSourceID: source.identifier,
+                            inputModeID: source.modeIdentifier, validSince: validSince,
+                            querySummary: previous.querySummary, identityReady: previous.identityReady,
+                            identityExpires: previous.identityExpires,
+                            keyboardActivityBlocked: previous.keyboardActivityBlocked)
+        onInvalidate?(version, "输入源已变化")
+        onResolved?(snapshot)
+        // A pre-switch query keeps its old version and cannot install a result.
+        // Its completion requests the current version when already in flight.
+        requestQuery()
+    }
+
+    private func matchesFrontIdentity(pid: pid_t, bundleID: String) -> Bool {
+        guard pid > 0, !bundleID.isEmpty, snapshot.bundleID == bundleID else { return false }
+        if let metadata {
+            return metadata.pid == pid && metadata.bundleID == bundleID &&
+                (!snapshot.ready || !snapshot.editable || focusedElement != nil)
+        }
+        return identity?.pid == pid && identity?.bundleID == bundleID
+    }
+
+    private func invalidate(_ reason: String, query: Bool, resetFailures: Bool, at boundaryTime: Double? = nil) {
         retryWork?.cancel()
         retryWork = nil
         if resetFailures { retryAfter = 0; failureCount = 0 }
-        validSince = ProcessInfo.processInfo.systemUptime
+        validSince = boundaryTime ?? ProcessInfo.processInfo.systemUptime
         version &+= 1
         focusedElement = nil
         metadata = nil
@@ -154,6 +233,7 @@ final class FocusContext {
         snapshot = Snapshot(version: version, bundleID: previous.bundleID, appName: previous.appName,
                             role: "", editable: false, ready: false, reason: "上下文已过期，正在重新确认",
                             expires: 0, inputMethod: previous.inputMethod, languageCode: previous.languageCode,
+                            inputSourceID: previous.inputSourceID, inputModeID: previous.inputModeID,
                             validSince: previous.validSince, querySummary: previous.querySummary,
                             identityReady: previous.identityReady, identityExpires: previous.identityExpires,
                             keyboardActivityBlocked: previous.keyboardActivityBlocked || !previous.editable)
@@ -164,7 +244,7 @@ final class FocusContext {
     /// This has no AX text query and no idle timer. It remains usable when the
     /// app's AX provider cannot expose a composer, but is labelled separately.
     private func refreshIdentity(at now: Double) {
-        guard active, !refreshingIdentity else { return }
+        guard active, !refreshingIdentity, !changingSource else { return }
         guard !snapshot.identityReady || now >= snapshot.identityExpires - 0.2 else { return }
         refreshingIdentity = true
         defer { refreshingIdentity = false }
@@ -183,13 +263,14 @@ final class FocusContext {
         snapshot = Snapshot(version: version, bundleID: bundle, appName: app?.localizedName ?? "未知应用",
                             role: previous.role, editable: previous.editable, ready: previous.ready,
                             reason: previous.reason, expires: previous.expires, inputMethod: source.inputMethod,
-                            languageCode: source.languageCode, validSince: validSince, querySummary: previous.querySummary,
+                            languageCode: source.languageCode, inputSourceID: source.identifier,
+                            inputModeID: source.modeIdentifier, validSince: validSince, querySummary: previous.querySummary,
                             identityReady: pid > 0 && !bundle.isEmpty, identityExpires: now + 0.75,
                             keyboardActivityBlocked: previous.keyboardActivityBlocked || Self.isModeEditor(bundle))
     }
 
     func requestQuery() {
-        guard active, !refreshingIdentity else { return }
+        guard active, !refreshingIdentity, !changingSource else { return }
         refreshIdentity(at: ProcessInfo.processInfo.systemUptime)
         guard active, ProcessInfo.processInfo.systemUptime >= retryAfter else { return }
         // A query's completion requests the latest version when necessary.
@@ -223,7 +304,7 @@ final class FocusContext {
             let editable = ready && enabled && textRole && editEvidence && !secure && !uncertainApp
             let reason = !trusted ? "未获得辅助功能权限；全局输入不进入有效速度" : !ready ? "AX 查询暂未确认焦点；上下文未知" : secure ? "安全文本区域：不统计" : uncertainApp ? "终端或模式编辑器：未接入用途适配器" : editable ? "可编辑控件元数据；仅估算，不能证明插入文字" : "未确认可编辑文本区域"
             let resolvedMetadata = ready ? Metadata(pid: pid, bundleID: bundle, role: role, subrole: subrole, enabled: enabled, editEvidence: editEvidence, source: source) : nil
-            let value = Snapshot(version: requestVersion, bundleID: bundle, appName: name, role: role, editable: editable, ready: ready, reason: reason, expires: ProcessInfo.processInfo.systemUptime + Self.leaseDuration(editable: editable, notifications: hasNotifications), inputMethod: source.inputMethod, languageCode: source.languageCode, validSince: requestSince, querySummary: result?.summary ?? "AX permission unavailable", identityReady: requestIdentityReady, identityExpires: requestIdentityExpires, keyboardActivityBlocked: uncertainApp || secure)
+            let value = Snapshot(version: requestVersion, bundleID: bundle, appName: name, role: role, editable: editable, ready: ready, reason: reason, expires: ProcessInfo.processInfo.systemUptime + Self.leaseDuration(editable: editable, notifications: hasNotifications), inputMethod: source.inputMethod, languageCode: source.languageCode, inputSourceID: source.identifier, inputModeID: source.modeIdentifier, validSince: requestSince, querySummary: result?.summary ?? "AX permission unavailable", identityReady: requestIdentityReady, identityExpires: requestIdentityExpires, keyboardActivityBlocked: uncertainApp || secure)
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.queryingVersion = nil
@@ -249,6 +330,7 @@ final class FocusContext {
     }
 
     private func apply(_ value: Snapshot, focused: AXUIElement?, metadata nextMetadata: Metadata?, transientFailure: Bool = false) {
+        guard value.version == version else { return }
         var resolved = value
         if snapshot.version == value.version && snapshot.identityExpires > value.identityExpires {
             resolved.identityReady = snapshot.identityReady
@@ -401,6 +483,132 @@ final class FocusContext {
         noneditableRenewal.apply(noneditableLease, focused: focused, metadata: disabled)
         noneditableRenewal.prepareForBatch(at: 100.1)
         expect(!noneditableRenewal.snapshot.ready && !noneditableRenewal.snapshot.permitsIdentity(time: 100.1, version: 1), "known noneditable focus cannot bypass exclusion while its lease is being renewed")
+
+        let latin = InputLanguages.Source(identifier: "test.latin", modeIdentifier: "latin", name: "Latin", languageCode: "en", inputMethod: false)
+        let handoff = FocusContext()
+        var sourceLease = lease
+        sourceLease.inputSourceID = source.identifier
+        sourceLease.inputModeID = source.modeIdentifier
+        sourceLease.identityReady = true
+        sourceLease.identityExpires = 99.5
+        handoff.apply(sourceLease, focused: focused, metadata: evidence)
+        handoff.queryingVersion = 1
+        var sourceCallbacks = [String]()
+        handoff.onSourceWillChange = { nextVersion, capturedLease in
+            sourceCallbacks.append("drain")
+            expect(nextVersion == 2 && handoff.version == 1 && handoff.snapshot.inputSourceID == source.identifier &&
+                   capturedLease.identityExpires == sourceLease.identityExpires,
+                   "captured old-source keys drain before the source handoff")
+        }
+        handoff.onInvalidate = { _, _ in sourceCallbacks.append("boundary") }
+        handoff.onResolved = { _ in sourceCallbacks.append("resolved") }
+        handoff.changeSource(latin, frontPID: getpid(), frontBundleID: "test.editor", at: 99)
+        expect(sourceCallbacks == ["drain", "boundary", "resolved"], "source handoff drains then interrupts timing before publishing the new source")
+        expect(handoff.version == 2 && handoff.snapshot.ready && handoff.snapshot.editable &&
+               handoff.snapshot.expires == sourceLease.expires && handoff.snapshot.identityExpires == 99.75,
+               "source switch refreshes public identity without extending positive AX evidence")
+        expect(handoff.snapshot.inputSourceID == latin.identifier && handoff.snapshot.inputModeID == latin.modeIdentifier &&
+               handoff.snapshot.languageCode == "en" && !handoff.snapshot.inputMethod &&
+               handoff.metadata?.source == latin && handoff.identity?.source == latin,
+               "source handoff updates classification and both opaque identity records together")
+        expect(handoff.snapshot.permits(time: 99, version: 2) && handoff.snapshot.permits(time: 98.9, version: 2) &&
+               !handoff.snapshot.permits(time: 99, version: 1), "new source accepts delayed callbacks within the same field's lease but rejects old capture versions")
+        expect(handoff.queryingVersion == 1, "source handoff leaves the old in-flight query tagged with its original version")
+        handoff.apply(sourceLease, focused: focused, metadata: evidence)
+        expect(handoff.version == 2 && handoff.snapshot.inputSourceID == latin.identifier && handoff.metadata?.source == latin,
+               "an AX result captured before the source switch cannot replace the new source lease")
+        handoff.changeSource(latin, frontPID: getpid(), frontBundleID: "test.editor", at: 99.1)
+        expect(handoff.version == 2 && sourceCallbacks.count == 3, "an unchanged source never drains, invalidates or republishes focus")
+        handoff.onSourceWillChange = nil
+        let revalidated = Snapshot(version: 2, bundleID: "test.editor", appName: "Editor", role: kAXTextAreaRole,
+                                   editable: true, ready: true, reason: "metadata", expires: 101,
+                                   inputMethod: false, languageCode: "en", inputSourceID: latin.identifier,
+                                   inputModeID: latin.modeIdentifier, validSince: 99)
+        handoff.apply(revalidated, focused: focused, metadata: handoff.metadata)
+        expect(handoff.version == 2 && handoff.snapshot.expires == 101,
+               "same-field AX revalidation after a source switch renews without a second interruption")
+        var alternateMode = latin
+        alternateMode.modeIdentifier = "alternate"
+        handoff.changeSource(alternateMode, frontPID: getpid(), frontBundleID: "test.editor", at: 99.2)
+        expect(handoff.version == 3 && handoff.snapshot.ready && handoff.snapshot.inputModeID == "alternate",
+               "a mode change within one input source receives the same immediate handoff")
+
+        let unknownHandoff = FocusContext()
+        let unknownLease = Snapshot(version: 1, bundleID: "test.editor", appName: "Editor", role: "",
+                                    editable: false, ready: false, reason: "AX failure", expires: 0,
+                                    inputMethod: true, languageCode: "zh", inputSourceID: source.identifier,
+                                    inputModeID: source.modeIdentifier, validSince: 80,
+                                    identityReady: true, identityExpires: 90)
+        unknownHandoff.apply(unknownLease, focused: nil, metadata: nil)
+        unknownHandoff.identity = Identity(pid: getpid(), bundleID: "test.editor", source: source)
+        var callbackDuringDelivery: (time: Double, version: UInt64)?
+        unknownHandoff.onSourceWillChange = { nextVersion, _ in
+            expect(unknownHandoff.snapshot.permitsIdentity(time: 100, version: 1) &&
+                   unknownHandoff.snapshot.inputSourceID == source.identifier && !unknownHandoff.snapshot.ready,
+                   "source switch refreshes expired same-app identity before draining the first unknown-context key")
+            callbackDuringDelivery = (99.99, nextVersion)
+        }
+        unknownHandoff.changeSource(latin, frontPID: getpid(), frontBundleID: "test.editor", at: 100)
+        expect(unknownHandoff.version == 2 && !unknownHandoff.snapshot.ready &&
+               unknownHandoff.snapshot.identityExpires == 100.75 && unknownHandoff.snapshot.validSince == 80 &&
+               unknownHandoff.identity?.source == latin && unknownHandoff.snapshot.inputSourceID == latin.identifier,
+               "unknown same-app source handoff retains identity coverage and original time bounds without inventing AX evidence")
+        expect(callbackDuringDelivery.map { unknownHandoff.snapshot.permitsIdentity(time: $0.time, version: $0.version) } == true,
+               "a callback stamped during old-source delivery survives on the new identity lease")
+
+        let expiredHandoff = FocusContext()
+        expiredHandoff.apply(sourceLease, focused: focused, metadata: evidence)
+        expiredHandoff.onSourceWillChange = { _, capturedLease in
+            expect(!expiredHandoff.snapshot.ready && !expiredHandoff.snapshot.permits(time: 100.1, version: 1) &&
+                   expiredHandoff.snapshot.permitsIdentity(time: 100.1, version: 1),
+                   "expired positive AX evidence is withheld before draining while fresh public identity permits the keyboard estimate")
+            expect(capturedLease.permits(time: 99.9, version: 1) && !capturedLease.permits(time: 100.1, version: 1),
+                   "source drain receives the original AX lease for captured pre-expiry events only")
+        }
+        expiredHandoff.changeSource(latin, frontPID: getpid(), frontBundleID: "test.editor", at: 100.1)
+        expect(expiredHandoff.version == 2 && !expiredHandoff.snapshot.ready && expiredHandoff.snapshot.expires == 0 &&
+               expiredHandoff.renewingExpiredLease && expiredHandoff.metadata?.source == latin,
+               "source switching never extends an expired AX lease or discards its pending renewal identity")
+
+        let secureMetadata = Metadata(pid: getpid(), bundleID: "test.editor", role: kAXTextFieldRole,
+                                      subrole: kAXSecureTextFieldSubrole, enabled: true, editEvidence: false, source: source)
+        for secure in [false, true] {
+            for expired in [false, true] {
+                let negativeHandoff = FocusContext()
+                let negativeLease = Snapshot(version: 1, bundleID: "test.editor", appName: "Editor", role: kAXTextAreaRole,
+                                         editable: false, ready: true, reason: secure ? "secure" : "noneditable", expires: 100,
+                                         inputMethod: true, languageCode: "zh", inputSourceID: source.identifier,
+                                         inputModeID: source.modeIdentifier, identityReady: true, identityExpires: 90,
+                                         keyboardActivityBlocked: secure)
+                negativeHandoff.apply(negativeLease, focused: focused, metadata: secure ? secureMetadata : disabled)
+                let time = expired ? 100.1 : 99
+                negativeHandoff.onSourceWillChange = { _, _ in
+                    expect(!negativeHandoff.snapshot.editable &&
+                           !negativeHandoff.snapshot.permitsIdentity(time: time, version: 1),
+                           "known negative or secure field evidence blocks fallback before source delivery")
+                }
+                negativeHandoff.changeSource(latin, frontPID: getpid(), frontBundleID: "test.editor", at: time)
+                expect(negativeHandoff.version == 2 && !negativeHandoff.snapshot.editable &&
+                       negativeHandoff.snapshot.ready == !expired && negativeHandoff.snapshot.keyboardActivityBlocked &&
+                       !negativeHandoff.snapshot.permitsIdentity(time: time, version: 2) &&
+                       negativeHandoff.metadata?.source == latin,
+                       "known noneditable and secure fields stay blocked across source changes and AX expiry")
+            }
+        }
+
+        for boundary in 0..<4 {
+            let withheld = FocusContext()
+            withheld.apply(boundary == 2 ? unknownLease : sourceLease,
+                           focused: boundary == 3 ? nil : focused, metadata: boundary == 2 ? nil : evidence)
+            var drained = false
+            withheld.onSourceWillChange = { _, _ in drained = true }
+            withheld.changeSource(latin, frontPID: boundary == 0 ? getpid() + 1 : getpid(),
+                                  frontBundleID: boundary == 1 ? "test.other" : "test.editor",
+                                  at: 99)
+            expect(withheld.version == 2 && !withheld.snapshot.ready && !withheld.snapshot.editable &&
+                   withheld.metadata == nil && !drained,
+                   "source handoff hard-invalidates changed apps and absent identity without draining a stale app lease")
+        }
         return failures
     }
 

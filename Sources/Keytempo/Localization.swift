@@ -336,10 +336,13 @@ enum AppLanguage {
         "当前速度": "Current speed",
         "最近输入速度": "Recent typing speed",
         "最近输入速度 · 已停止（估算）": "Recent typing speed · Stopped (estimated)",
-        "中文输入法兼容模式（按键估算）": "Chinese IME compatibility mode (keystroke estimate)",
-        "全局监听 · 中文键盘兼容模式": "Global monitoring · Chinese keyboard compatibility",
-        "中文输入源的焦点上下文无法查询时，以按键活动估算，可能包含非文本操作；已确认的非编辑区域仍排除。其他语言继续要求编辑上下文证据。权限不足、应用排除或安全输入时不统计。": "When focus context cannot be queried for a Chinese input source, estimate keyboard activity, which may include non-text actions. Known noneditable regions remain excluded. Other languages still require editable-context evidence. Missing permissions, excluded apps and Secure Input stop monitoring.",
-        "仅在中文输入源的焦点上下文无法查询时，改用按键活动估算 WPM，可能计入非文本操作。已确认的非编辑区域、快捷键、空格、自动重复与已识别的生成输入仍排除。不会统计实际汉字数。": "Only when focus context cannot be queried for a Chinese input source, estimate WPM from keyboard activity, which may include non-text actions. Known noneditable regions, shortcuts, spaces, system repeats and known generated input remain excluded. It does not count actual Chinese characters.",
+        "全局键盘兼容模式（按键估算）": "Global keyboard compatibility mode (keyboard estimate)",
+        "全局监听 · 键盘兼容模式": "Global monitoring · Keyboard compatibility",
+        "全局键盘活动估算；未确认文本框": "Global keyboard activity estimate; text field unconfirmed",
+        "全局键盘兼容模式已变化": "Global keyboard compatibility mode changed",
+        "输入切换键或快捷键修饰键已变化": "Input-switch key or shortcut modifier changed",
+        "所有输入语言的焦点上下文无法查询时，以按键活动估算，可能包含非文本操作；已确认的非编辑区域、快捷键与空格仍排除。权限不足、应用排除或安全输入时不统计。": "When focus context cannot be queried for any input language, estimate keyboard activity, which may include non-text actions. Known noneditable regions, shortcuts and spaces remain excluded. Missing permissions, excluded apps and Secure Input stop monitoring.",
+        "所有输入语言的焦点上下文无法查询时，改用按键活动估算 WPM，可能计入非文本操作。已确认的非编辑区域、快捷键、空格、自动重复与已识别的生成输入仍排除。不统计实际上屏字符数。": "When focus context cannot be queried for any input language, estimate WPM from keyboard activity, which may include non-text actions. Known noneditable regions, shortcuts, spaces, system repeats and known generated input remain excluded. It does not count actual committed characters.",
         "今日累计": "Today",
         "今日平均速度": "Today's average",
         "当前速度、今日平均速度和累计合并全部输入语言。": "Current speed, today's average and totals combine all input languages.",
@@ -759,6 +762,8 @@ func runLocalizationChecks() -> [String] {
     expect(AppLanguage.translated("事件缓冲区溢出；已丢弃 42 个事件", language: "en") == "Event buffer overflow; dropped 42 events", "bounded overflow count")
     expect(AppLanguage.translated("键盘布局 · en", language: "en") == "Keyboard layout · en", "input-source code preserved")
     expect(AppLanguage.translated("当前输入段", language: "en") == "Current typing burst", "current burst label")
+    expect(AppLanguage.translated("全局键盘兼容模式（按键估算）", language: "en") == "Global keyboard compatibility mode (keyboard estimate)", "global keyboard compatibility label")
+    expect(AppLanguage.translated("全局键盘活动估算；未确认文本框", language: "en") == "Global keyboard activity estimate; text field unconfirmed", "global keyboard compatibility status")
     expect(AppLanguage.translated("最近完成：%@ · %@ · %@", language: "en", arguments: ["English", "Global estimate", "12:00"]) == "Last completed: English · Global estimate · 12:00", "completed segment metadata")
     expect(AppLanguage.translated("私人应用 暂停统计", language: "en") == "私人应用 暂停统计", "unknown strings untouched")
     expect(AppLanguage.translated("今日练习积分", language: "en") == "Today's Typing Score", "accumulating score label")

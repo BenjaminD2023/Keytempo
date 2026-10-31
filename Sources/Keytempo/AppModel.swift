@@ -250,7 +250,8 @@ struct HistoryDay: Identifiable {
     @Published var menuDisplay = UserDefaults.standard.string(forKey: "menuDisplay") ?? "hybrid"
     @Published var diagnosticsEnabled = false
     @Published var suspectedInputFilteringEnabled = UserDefaults.standard.object(forKey: "suspectedInputFilteringEnabled") as? Bool ?? true
-    @Published var chineseKeyboardCompatibilityEnabled = UserDefaults.standard.bool(forKey: "chineseKeyboardCompatibilityEnabled")
+    // Preserve the saved opt-in from the original Chinese-only compatibility mode.
+    @Published var globalKeyboardCompatibilityEnabled = UserDefaults.standard.bool(forKey: "chineseKeyboardCompatibilityEnabled")
     @Published private(set) var suspiciousRepeatEvents: UInt64 = 0
     @Published private(set) var suspiciousBurstEvents: UInt64 = 0
     @Published var launchAtLogin = SMAppService.mainApp.status == .enabled
@@ -365,8 +366,8 @@ struct HistoryDay: Identifiable {
     private var appNameCache: [String: String] = [:]
     private var clearingAppActivity = false
 
-    static func rule(_ maximum: Double, suspectedInputFiltering: Bool = true, chineseKeyboardCompatibility: Bool = false) -> String {
-        "adaptive-v4-no-space-ime-quality-" + (suspectedInputFiltering ? "on" : "off") + "-max" + String(format: "%.1f", maximum) + (chineseKeyboardCompatibility ? "-ime-fallback" : "")
+    static func rule(_ maximum: Double, suspectedInputFiltering: Bool = true, globalKeyboardCompatibility: Bool = false) -> String {
+        "adaptive-v4-no-space-ime-quality-" + (suspectedInputFiltering ? "on" : "off") + "-max" + String(format: "%.1f", maximum) + (globalKeyboardCompatibility ? "-keyboard-fallback" : "")
     }
     static func day(_ date: Date = Date()) -> String {
         let c = Calendar.current.dateComponents([.year, .month, .day], from: date)
@@ -387,8 +388,8 @@ struct HistoryDay: Identifiable {
         if let perAppTracking { perAppTrackingEnabled = perAppTracking }
         let gap = UserDefaults.standard.object(forKey: "maximumGap") as? Double ?? 3
         let filterSuspected = UserDefaults.standard.object(forKey: "suspectedInputFilteringEnabled") as? Bool ?? true
-        let chineseCompatibility = UserDefaults.standard.bool(forKey: "chineseKeyboardCompatibilityEnabled")
-        engine = StatisticsEngine(config: SegmentationConfig(maximumGap: gap, ruleID: Self.rule(gap, suspectedInputFiltering: filterSuspected, chineseKeyboardCompatibility: chineseCompatibility)), timeZone: .current)
+        let globalCompatibility = UserDefaults.standard.bool(forKey: "chineseKeyboardCompatibilityEnabled")
+        engine = StatisticsEngine(config: SegmentationConfig(maximumGap: gap, ruleID: Self.rule(gap, suspectedInputFiltering: filterSuspected, globalKeyboardCompatibility: globalCompatibility)), timeZone: .current)
         // Keep the existing on-disk identity so renaming the app preserves history.
         let directory = dataDirectory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("TypingSpeed", isDirectory: true)
         databaseURL = directory.appendingPathComponent("statistics.sqlite")
@@ -413,17 +414,23 @@ struct HistoryDay: Identifiable {
             self?.handleMonitoringStatus(value)
         }
         monitor.suspectedInputFilteringEnabled = filterSuspected
-        monitor.chineseKeyboardCompatibilityEnabled = chineseCompatibility
+        monitor.globalKeyboardCompatibilityEnabled = globalCompatibility
         updateExclusions()
         refreshInputLanguages()
         for name in [InputLanguages.sourceChanged, InputLanguages.policyChanged] {
             observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated {
                     guard let self else { return }
-                    self.monitor.flushPendingInput()
                     let sourceOnly = name == InputLanguages.sourceChanged
-                    self.interruptEngine(preservingRecentPresentation: sourceOnly && self.recentEvidence == .probable && self.recentPresentationValid,
-                                         preservingHybridActivity: sourceOnly)
+                    // FocusContext drains the old-source ring before its
+                    // handoff. An observer-order-dependent flush here would
+                    // discard that source's pending prefix before it can replay.
+                    if !sourceOnly {
+                        self.monitor.flushPendingInput()
+                        self.interruptEngine()
+                    }
+                    // The global monitor and confirmed editor each interrupt
+                    // after flushing their old-source input in capture order.
                     self.refreshInputLanguages()
                     self.refreshSnapshot()
                 }
@@ -538,7 +545,7 @@ struct HistoryDay: Identifiable {
     }
     func receiveCommit(english: Int, chinese: Int, language: String = "und", unratedCharacters: Int = 0) {
         guard !isPaused, !sleeping, !clearing, !ownedAdapterExcluded else { return }
-        var row = StoredAggregate(day: Self.day(), timezone: TimeZone.current.identifier, rule: Self.rule(maximumGap, suspectedInputFiltering: suspectedInputFilteringEnabled, chineseKeyboardCompatibility: chineseKeyboardCompatibilityEnabled), evidence: "confirmed", language: language)
+        var row = StoredAggregate(day: Self.day(), timezone: TimeZone.current.identifier, rule: Self.rule(maximumGap, suspectedInputFiltering: suspectedInputFilteringEnabled, globalKeyboardCompatibility: globalKeyboardCompatibilityEnabled), evidence: "confirmed", language: language)
         row.english = english; row.chinese = chinese; row.characters = max(0, unratedCharacters)
         accumulate(row); scheduleUI()
     }
@@ -995,16 +1002,20 @@ struct HistoryDay: Identifiable {
         refreshSnapshot()
     }
     func refreshInputLanguages() {
-        updateInputSource(InputLanguages.current)
+        // Capture owners flush and interrupt source changes in event order.
+        // Refreshing the labels must not discard their pending old-source keys.
+        updateInputSource(InputLanguages.current, interrupting: false)
     }
     /// Source identity includes the IME mode. Kept separate so isolated checks
     /// can exercise a language round trip without changing macOS or user prefs.
-    fileprivate func updateInputSource(_ source: InputLanguages.Source) {
+    fileprivate func updateInputSource(_ source: InputLanguages.Source, interrupting: Bool = true) {
         if presentedInputSource != source {
-            monitor.flushPendingInput()
+            if interrupting { monitor.flushPendingInput() }
             presentedInputSource = source
-            interruptEngine(preservingRecentPresentation: recentEvidence == .probable && recentPresentationValid,
-                            preservingHybridActivity: true)
+            if interrupting {
+                interruptEngine(preservingRecentPresentation: recentEvidence == .probable && recentPresentationValid,
+                                preservingHybridActivity: true)
+            }
         }
         currentInputLanguageCode = source.languageCode
         currentInputLanguage = "\(languageName(source.languageCode)) · \(source.name)"
@@ -1037,18 +1048,18 @@ struct HistoryDay: Identifiable {
     func applySettings() {
         monitor.flushPendingInput()
         maximumGap = max(1, min(6, maximumGap))
-        let countingRule = Self.rule(maximumGap, suspectedInputFiltering: suspectedInputFilteringEnabled, chineseKeyboardCompatibility: chineseKeyboardCompatibilityEnabled)
+        let countingRule = Self.rule(maximumGap, suspectedInputFiltering: suspectedInputFilteringEnabled, globalKeyboardCompatibility: globalKeyboardCompatibilityEnabled)
         let countingRuleChanged = engine.config.ruleID != countingRule
         if countingRuleChanged { resetTenMinuteWindow() }
         engine.updateConfig(SegmentationConfig(maximumGap: maximumGap, ruleID: countingRule))
         monitor.suspectedInputFilteringEnabled = suspectedInputFilteringEnabled
-        monitor.chineseKeyboardCompatibilityEnabled = chineseKeyboardCompatibilityEnabled
+        monitor.globalKeyboardCompatibilityEnabled = globalKeyboardCompatibilityEnabled
         updateExclusions()
         if countingRuleChanged { finishActivitySession("settingsChanged"); interruptEngine() }
         monitor.diagnosticsEnabled = diagnosticsEnabled
         UserDefaults.standard.set(excludedAppsText, forKey: "excludedApps"); UserDefaults.standard.set(maximumGap, forKey: "maximumGap"); UserDefaults.standard.set(menuDisplay, forKey: "menuDisplay")
         UserDefaults.standard.set(suspectedInputFilteringEnabled, forKey: "suspectedInputFilteringEnabled")
-        UserDefaults.standard.set(chineseKeyboardCompatibilityEnabled, forKey: "chineseKeyboardCompatibilityEnabled")
+        UserDefaults.standard.set(globalKeyboardCompatibilityEnabled, forKey: "chineseKeyboardCompatibilityEnabled")
         if !diagnosticsEnabled { diagnostics.removeAll(); pendingDiagnostics.removeAll() }
         flush(); refreshSnapshot()
     }
@@ -1213,7 +1224,7 @@ struct HistoryDay: Identifiable {
         // Preserve all quantities, while comparing rates only under the
         // current counting/segmentation rule. Legacy time is never silently
         // blended into a newer numerator definition.
-        let currentRule = Self.rule(maximumGap, suspectedInputFiltering: suspectedInputFilteringEnabled, chineseKeyboardCompatibility: chineseKeyboardCompatibilityEnabled)
+        let currentRule = Self.rule(maximumGap, suspectedInputFiltering: suspectedInputFilteringEnabled, globalKeyboardCompatibility: globalKeyboardCompatibilityEnabled)
         let currentEstimatedToday = estimatedToday.filter { $0.rule == currentRule }
         let ratedIntervals = currentEstimatedToday.reduce(0.0) { $0 + $1.intervals }
         let ratedSeconds = currentEstimatedToday.reduce(0.0) { $0 + $1.seconds }
@@ -1242,7 +1253,7 @@ struct HistoryDay: Identifiable {
         else if ownedAdapterExcluded && NSApp.isActive { nextStatus = "本应用已排除" }
         else if !localPath && (!hasInputPermission || !hasAccessibilityPermission) { nextStatus = "权限不可用 · 全局估算已停止" }
         else if unavailable && !localPath { nextStatus = monitor.status }
-        else if monitor.usesChineseKeyboardEstimate && !localPath { nextStatus = monitor.status }
+        else if monitor.usesGlobalKeyboardEstimate && !localPath { nextStatus = monitor.status }
         else if phase == "idle" { nextStatus = "已停止／未观察到输入 · 最近节奏已冻结" }
         else if phase == "typing" { nextStatus = "正在统计 · \(localPath ? "已确认" : "估算")输入段" }
         else { nextStatus = "候选输入段 · 数据不足" }
@@ -1412,7 +1423,7 @@ struct HistoryDay: Identifiable {
                     self.estimatedRhythm.reset(); self.lastEstimatedInputTime = nil; self.estimatedRhythmHasFreshInterval = false
                     self.estimatedRecentKPM = nil
                     self.resetTenMinuteWindow()
-                    self.engine = StatisticsEngine(config: SegmentationConfig(maximumGap: self.maximumGap, ruleID: Self.rule(self.maximumGap, suspectedInputFiltering: self.suspectedInputFilteringEnabled, chineseKeyboardCompatibility: self.chineseKeyboardCompatibilityEnabled)), timeZone: .current)
+                    self.engine = StatisticsEngine(config: SegmentationConfig(maximumGap: self.maximumGap, ruleID: Self.rule(self.maximumGap, suspectedInputFiltering: self.suspectedInputFilteringEnabled, globalKeyboardCompatibility: self.globalKeyboardCompatibilityEnabled)), timeZone: .current)
                 }
                 self.clearing = false; self.refreshSnapshot(); self.loadHistory(days: self.historyDays)
                 if self.activityVisible { self.loadActivity(day: self.activityDate) }
@@ -2042,8 +2053,29 @@ private extension AppModel {
            "confirmed adapter menu uses estimated WPM while its actual CPM remains available")
     model.handleMonitoringInterruption("前台应用已变化", capabilitiesAvailable: true, source: chinese); model.refreshSnapshot()
     expect(model.selectedMenuSpeed.value == nil, "confirmed editor rate is not carried into another app")
-    expect(AppModel.rule(3) == "adaptive-v4-no-space-ime-quality-on-max3.0" && AppModel.rule(3, chineseKeyboardCompatibility: true).hasSuffix("-ime-fallback"),
-           "Chinese keyboard fallback has a separate rule without rewriting ordinary history")
+    expect(AppModel.rule(3) == "adaptive-v4-no-space-ime-quality-on-max3.0" && AppModel.rule(3, globalKeyboardCompatibility: true).hasSuffix("-keyboard-fallback"),
+           "Global keyboard fallback has a separate rule without rewriting ordinary or Chinese-only history")
+    func deliverSourceEvent(_ offset: Double, language: String) {
+        model.receiveConfirmedInput(ClassifiedInput(time: now + offset, date: date.addingTimeInterval(offset),
+            context: 985, category: .textEntry, evidence: .probable, source: .global, language: language))
+        model.refreshSnapshot()
+    }
+    model.updateInputSource(english)
+    deliverSourceEvent(40, language: "en")
+    deliverSourceEvent(40.2, language: "en")
+    let beforeSourceLabel = model.dailyEstimate
+    model.updateInputSource(chinese, interrupting: false)
+    deliverSourceEvent(40.4, language: "en")
+    expect(model.dailyEstimate.keys == beforeSourceLabel.keys + 1 &&
+           abs(model.dailyEstimate.intervals - beforeSourceLabel.intervals - 1) < 1e-9 &&
+           abs(model.dailyEstimate.seconds - beforeSourceLabel.seconds - 0.2) < 1e-6,
+           "early source-label notification preserves the captured old-source prefix and its interval")
+    model.handleMonitoringInterruption("输入源已变化", capabilitiesAvailable: true, source: chinese)
+    let beforeSourceBoundary = model.dailyEstimate
+    deliverSourceEvent(41, language: "zh")
+    expect(model.dailyEstimate.keys == beforeSourceBoundary.keys + 1 &&
+           model.dailyEstimate.intervals == beforeSourceBoundary.intervals,
+           "ordered capture handoff interrupts timing only after the previous source prefix is delivered")
     model.flushBeforeExit()
     return failures
 }

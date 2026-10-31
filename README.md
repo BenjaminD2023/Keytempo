@@ -4,11 +4,11 @@ A native macOS menu bar app for understanding your everyday typing rhythm. Built
 
 [简体中文](README.zh-CN.md) · [Releases](https://github.com/BenjaminD2023/Keytempo/releases) · [Changelog](CHANGELOG.md) · [License](LICENSE) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
 
-**Stable release: 0.5.2 (build 24).** [Download for Apple Silicon](https://github.com/BenjaminD2023/Keytempo/releases/download/v0.5.2/Keytempo-0.5.2-macos-arm64.zip) · [Release notes](https://github.com/BenjaminD2023/Keytempo/releases/tag/v0.5.2). Requires macOS 13 or later.
+**Stable release: 0.5.3 (build 25).** [Download for Apple Silicon](https://github.com/BenjaminD2023/Keytempo/releases/download/v0.5.3/Keytempo-0.5.3-macos-arm64.zip) · [Release notes](https://github.com/BenjaminD2023/Keytempo/releases/tag/v0.5.3). Requires macOS 13 or later.
 
 ## What it measures
 
-Keytempo separates **context-based estimates** from **confirmed input**. Global keyboard monitoring can estimate activity in supported editable controls, but it cannot prove that every key inserted text or obtain Chinese character commits. An optional Chinese IME compatibility mode can also estimate keyboard activity when focused-control metadata is unavailable, with reduced ability to exclude non-text operations. Confirmed operation and character counts currently come from the app's built-in validation editor.
+Keytempo separates **context-based estimates** from **confirmed input**. Global keyboard monitoring can estimate activity in supported editable controls, but it cannot prove that every key inserted text or obtain Chinese character commits. An optional global keyboard compatibility mode can also estimate keyboard activity when focused-control metadata is unavailable, with reduced ability to exclude non-text operations. Confirmed operation and character counts currently come from the app's built-in validation editor.
 
 | Metric | Definition | Availability |
 |---|---|---|
@@ -30,7 +30,7 @@ The daily overview and menu popup show one **estimated keystroke counter** for e
 
 ## Activity, Typing Score and XP
 
-Stable release **0.5.2 (build 24)** uses the daily scoring and midnight XP-credit policy below. See the [changelog](CHANGELOG.md) and [validation notes](docs/VALIDATION.md) for release changes and executed checks.
+Stable release **0.5.3 (build 25)** uses the daily scoring and midnight XP-credit policy below. See the [changelog](CHANGELOG.md) and [validation notes](docs/VALIDATION.md) for release changes and executed checks.
 
 The **Activity** tab provides a date-selectable hourly timeline, automatic sessions, separate speed/consistency trends, and a daily-score chart. Hours and sessions show accepted keystrokes, actual typing time and weighted estimated WPM. Sessions end after a five-minute gap or a pause, sleep, quit, day, timezone or counting-rule boundary. Elapsed span is separate from measured typing time; interruptions add no time.
 
@@ -79,7 +79,7 @@ The theme gallery uses distinct vector artwork and geometric rank seals, with co
 - English and Simplified Chinese app interfaces, independent of input-source language.
 - Combined input statistics across all accepted languages, without recorded-language selection.
 - Combined 7-day, 30-day, 90-day, one-year and five-year history, separate KPM columns and CSV export.
-- Application exclusions, optional Chinese IME compatibility and suspected-repeat/burst filtering, and a diagnostic view without input content.
+- Application exclusions, optional global keyboard compatibility and suspected-repeat/burst filtering, and a diagnostic view without input content.
 - A real `NSTextView` validation path for composition, editing and character-commit coverage.
 - Check for Updates, manual download/install and optional automatic checks/downloads through Sparkle.
 
@@ -87,7 +87,7 @@ History uses daily periods for ranges up to 90 days, weekly periods for one year
 
 ## Install
 
-Download [Keytempo 0.5.2 for Apple Silicon](https://github.com/BenjaminD2023/Keytempo/releases/download/v0.5.2/Keytempo-0.5.2-macos-arm64.zip), extract it, and move `Keytempo.app` to `/Applications` or `~/Applications`. Keep that location fixed before granting permissions. Other versions and checksums are available in [Releases](https://github.com/BenjaminD2023/Keytempo/releases).
+Download [Keytempo 0.5.3 for Apple Silicon](https://github.com/BenjaminD2023/Keytempo/releases/download/v0.5.3/Keytempo-0.5.3-macos-arm64.zip), extract it, and move `Keytempo.app` to `/Applications` or `~/Applications`. Keep that location fixed before granting permissions. Other versions and checksums are available in [Releases](https://github.com/BenjaminD2023/Keytempo/releases).
 
 Current maintainer builds use a stable local **Apple Development** signing identity; they are **not Developer ID distribution or notarized**. macOS may still require first-launch approval. Older 0.1.1 downloads (original app/tag `1.1.1`) were ad hoc signed, which tied permissions to a changing binary hash. Migrating to the new certificate identity requires one new grant. On the maintainer Mac, an actual Sparkle update from original `1.2.0` build 9 to original `1.2.1` build 10 retained both Input Monitoring and Accessibility authorization after relaunch and an in-app recheck, without changing permission settings. This local result does not guarantee every Mac or confirm every app's editable-control coverage; future builds must preserve the signing identity and installation path. Release assets identify their architecture; the locally tested build and automatic-update channel are Apple Silicon (`arm64`). Intel execution has not been verified.
 
@@ -101,7 +101,7 @@ For global estimates, allow Keytempo in **System Settings → Privacy & Security
 2. **Accessibility** checks focused-control roles and editability metadata.
 3. Return to Keytempo Settings and choose **Check permissions again**. If macOS still associates permissions with an older build, reselect the installed app and restart it.
 
-The built-in validation editor works without these global permissions. Secure Input and revoked permissions stop global classification. Strict mode also withholds unknown or expired text contexts; the optional compatibility mode below changes only the stated Chinese keyboard-activity coverage. No events alone do not prove that you were idle.
+The built-in validation editor works without these global permissions. Secure Input and revoked permissions stop global classification. Strict mode also withholds unknown or expired text contexts; the optional compatibility mode below changes only the stated keyboard-activity coverage. No events alone do not prove that you were idle.
 
 ### Updates
 
@@ -111,7 +111,7 @@ Choose **Check for Updates…** in the app menu or Settings to check manually, t
 
 The 0.1.1 app (original app/tag `1.1.1`) does not contain an updater; install the first updater-enabled release manually once. Updates do not grant privacy permissions, bypass macOS approval or convert global Chinese keystrokes into confirmed CPM. Certificate signing and download signatures protect different parts of the update process. See [release instructions](docs/RELEASING.md) for publisher setup and known signing limits.
 
-Keytempo uses `0.x` versions: historical `1.1.0` and `1.2.0` are documented as `0.1.0` and `0.2.0`. Version `0.5.2` uses build 24 and credits ended days at midnight without waiting for sleep, with settlement animations on the next menu/app opening. Version `0.5.1` uses build 23, brings proportional icons and the configurable WPM range to the stable channel, and makes the typing/count menu mode the default for unset preferences. Version `0.5.1-beta` uses build 22 and adds proportional icon response with a configurable animation range on the preview channel. Version `0.5.0` uses build 21 and brings daily score, deferred XP settlement, themes and speed-responsive icons to the stable channel. Version `0.4.1` uses build 17 and adds accumulating score, independent XP/levels and verified personal improvement. Version `0.4.0` build 16 introduced activity analytics and the legacy practice score. Version `0.3.2` build 15 combined language metrics and clarified the menu's WPM display. Version `0.3.1` build 14 introduced Chinese input recovery and the optional typing/count menu mode; its tag and downloads are preserved. Existing signed `1.x` downloads and tags also retain their original identifiers. Internal build numbers continue increasing for updater compatibility. Release notes describe the current version's changes; the [complete changelog and version mapping](CHANGELOG.md) retains the full history.
+Keytempo uses `0.x` versions: historical `1.1.0` and `1.2.0` are documented as `0.1.0` and `0.2.0`. Version `0.5.3` uses build 25 and fixes global keyboard compatibility across input languages, input-source handoffs and Caps Lock transitions. Version `0.5.2` uses build 24 and credits ended days at midnight without waiting for sleep, with settlement animations on the next menu/app opening. Version `0.5.1` uses build 23, brings proportional icons and the configurable WPM range to the stable channel, and makes the typing/count menu mode the default for unset preferences. Version `0.5.1-beta` uses build 22 and adds proportional icon response with a configurable animation range on the preview channel. Version `0.5.0` uses build 21 and brings daily score, deferred XP settlement, themes and speed-responsive icons to the stable channel. Version `0.4.1` uses build 17 and adds accumulating score, independent XP/levels and verified personal improvement. Version `0.4.0` build 16 introduced activity analytics and the legacy practice score. Version `0.3.2` build 15 combined language metrics and clarified the menu's WPM display. Version `0.3.1` build 14 introduced Chinese input recovery and the optional typing/count menu mode; its tag and downloads are preserved. Existing signed `1.x` downloads and tags also retain their original identifiers. Internal build numbers continue increasing for updater compatibility. Release notes describe the current version's changes; the [complete changelog and version mapping](CHANGELOG.md) retains the full history.
 
 ## Build and test
 
@@ -152,13 +152,13 @@ Recognized Command/Control shortcuts, navigation and generated operations interr
 
 Candidate keys may represent selection rather than new characters. A bounded input-method heuristic uses recent typing in an eligible editable context to count candidate digits, arrows and Return as **probable composition operations**. That estimates purpose; it does not observe marked text or prove a character commit. Without that context, navigation and ambiguous action keys remain excluded or unknown. Spaces are skipped by global count/KPM statistics; an otherwise valid space does not split continuity, and the next accepted interval retains its full actual duration. The confirmed editor still uses real commit callbacks, including genuine text or candidate confirmation, for character coverage.
 
-### Chinese IME compatibility mode
+### Global keyboard compatibility mode
 
-**Settings → Input filtering → Chinese IME compatibility mode (keystroke estimate)** is off by default. Enable it if an app such as WeChat provides no usable focused-editor metadata. When the current source is a Chinese IME and a fresh frontmost-app/source identity is available, it can count eligible keyboard activity as estimated WPM/KPM without pretending to confirm text insertion. Identity checks are event-triggered with a 0.75-second lease, outside the keyboard callback. It does not count Chinese characters or supply CPM.
+**Settings → Input filtering → Global keyboard compatibility mode (keyboard estimate)** is off by default. Enable it if an app such as WeChat provides no usable focused-editor metadata. For any input-source language, when a fresh frontmost-app/source identity is available, it can count eligible keyboard activity as estimated WPM/KPM without pretending to confirm text insertion. Identity checks are event-triggered with a 0.75-second lease, outside the keyboard callback. It does not count Chinese characters or supply CPM.
 
-This mode applies only while text-control evidence is unavailable. A known noneditable control, excluded app, unsupported terminal/mode editor, Secure Input or missing permission still blocks recording. Recognized shortcuts, spaces, navigation/action keys, system repeats and known synthetic events remain excluded; this fallback does not infer candidate selection from unknown-context arrow or Return keys. The optional suspected-input guard still applies. Combining languages does not bypass these filters or enable compatibility mode automatically.
+The context fallback applies while text-control evidence is unavailable. The mode also retains printable IME digits in an editable field when Caps Lock or a mode switch leaves no active composition hypothesis. A known noneditable control, excluded app, unsupported terminal/mode editor, Secure Input or missing permission still blocks recording. Recognized shortcuts, spaces, navigation/action keys, system repeats and known synthetic events remain excluded; this fallback does not infer candidate selection from unknown-context arrow or Return keys. The optional suspected-input guard still applies. Combining languages does not bypass these filters or enable compatibility mode automatically.
 
-The tradeoff is explicit: unrecognized non-text letter/number operations can enter the estimate when an app supplies no editor evidence. This is broader keyboard-activity coverage, not confirmed text input or complete macro detection. The UI identifies it as an unconfirmed-textbox estimate. Toggling the mode starts a separate counting rule (`-ime-fallback` suffix); existing aggregates remain intact and incompatible rates are not silently merged. A physical System Pinyin test in WeChat 4.1.15 on the maintainer Mac recorded and saved keystrokes through this fallback; broader coverage and error rates remain unmeasured. See [current evidence](docs/VALIDATION.md).
+The tradeoff is explicit: unrecognized non-text letter/number operations can enter the estimate when an app supplies no editor evidence. This is broader keyboard-activity coverage, not confirmed text input or complete macro detection. The UI identifies it as an unconfirmed-textbox estimate. The expanded mode uses a separate counting rule (`-keyboard-fallback` suffix); the saved opt-in and existing aggregates, including older `-ime-fallback` records, remain intact and incompatible rates are not silently merged. A physical System Pinyin test of the original Chinese-only fallback in WeChat 4.1.15 on the maintainer Mac recorded and saved keystrokes; broader coverage and error rates remain unmeasured. See [current evidence](docs/VALIDATION.md).
 
 ### Other input limits
 

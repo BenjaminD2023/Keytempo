@@ -31,7 +31,7 @@ The application is named Keytempo. The user wants more polished and expressive h
 
 ## Evidence and delivery
 
-Production Swift sources, native self-checks and the installed app are the implementation authority. The stable release is 0.5.2, build 24, including midnight XP credit without a sleep prerequisite and settlement playback on the next menu/app opening. Proportional menu-icon response, the configurable animation range and the typing/count default remain available. Use synthetic fixtures for testing settlement states and preserve real local typing history. Publish releases after local verification and user authorization.
+Production Swift sources, native self-checks and the installed app are the implementation authority. The stable release is 0.5.3, build 25, with global keyboard compatibility across input languages, input-source handoff and Caps Lock recovery fixes. Midnight XP credit without a sleep prerequisite and settlement playback on the next menu/app opening remain available, along with proportional menu-icon response, the configurable animation range and the typing/count default. Use synthetic fixtures for testing settlement states and preserve real local typing history. Publish releases after local verification and user authorization.
 
 ## Product principles
 

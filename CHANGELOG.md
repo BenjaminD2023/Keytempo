@@ -23,8 +23,26 @@ The project changed its public version convention before the `0.3.0` release. Hi
 | 0.5.1-beta | 0.5.1-beta / `v0.5.1-beta` | 22 | Prerelease: proportional menu icon response and configurable WPM range |
 | 0.5.1 | 0.5.1 / `v0.5.1` | 23 | Stable: proportional menu icons and typing/count display by default |
 | 0.5.2 | 0.5.2 / `v0.5.2` | 24 | Stable: midnight XP credit and settlement playback on opening |
+| 0.5.3 | 0.5.3 / `v0.5.3` | 25 | Stable: global keyboard compatibility and input-switch recovery |
 
 Already published signed archives, source tags and download URLs retain their original `1.x` identifiers. Their changelog labels are normalized; their embedded app versions have not been rewritten. New releases use `0.x` app versions and tags. The internal build number continues increasing, so Sparkle can offer `0.3.0` (build 11) to apps displaying `1.2.0` (build 9) or `1.2.1` (build 10).
+
+## [0.5.3] - 2026-10-31
+
+Stable release, internal build 25.
+
+### Changed
+
+- Expand the optional Chinese IME compatibility setting to **Global keyboard compatibility mode**, covering all input languages when focused-editor metadata is unavailable. Preserve the saved opt-in; the default remains off.
+- Identify expanded compatibility estimates with a new `-keyboard-fallback` counting rule. Preserve historical counts, including older `-ime-fallback` records, and keep incompatible rates separate. Confirmed character counts and CPM are unchanged; existing permission, secure-input, app, shortcut, space, repeat and synthetic-event filters still apply.
+
+### Fixed
+
+- Deliver queued input with its original timestamps and source attribution across input-method changes, including delayed source notifications and Vorssaint switches. Refresh same-app identity after idle without extending expired editable-control evidence or bypassing known noneditable fields.
+- Resume ordinary typing after Caps Lock, Globe or Super-key changes even when the input source stays unchanged. Retain printable IME digits in compatibility mode when Caps Lock leaves the IME in Latin passthrough; modifier keys themselves are not counted.
+- Recover promptly from repeated system suspensions of the keyboard listener, including when its event buffer is full.
+
+Validation: 234 Swift tests across 23 suites, 22 Python release-tool tests and native integration checks passed. The new regressions use constructed events and isolated metadata; they do not establish physical-input coverage for every input method, hotkey tool or app.
 
 ## [0.5.2] - 2026-10-28
 
@@ -304,7 +322,8 @@ Originally local `1.1.0` builds; no separate public release archive was publishe
 - Separate global estimates from a real confirmed editor adapter, with adaptive segment timing and local aggregate storage.
 - Establish core, persistence and application integration tests and document the limits of real-world input and resource validation.
 
-[Unreleased]: https://github.com/BenjaminD2023/Keytempo/compare/v0.5.2...HEAD
+[Unreleased]: https://github.com/BenjaminD2023/Keytempo/compare/v0.5.3...HEAD
+[0.5.3]: https://github.com/BenjaminD2023/Keytempo/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/BenjaminD2023/Keytempo/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/BenjaminD2023/Keytempo/compare/v0.5.0...v0.5.1
 [0.5.1-beta]: https://github.com/BenjaminD2023/Keytempo/compare/v0.5.0...v0.5.1-beta
