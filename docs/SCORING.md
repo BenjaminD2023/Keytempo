@@ -99,7 +99,7 @@ Ordinary XP is the finalized daily score **1:1**, with no daily cap. The current
 5. Input/activity deltas, daily checkpoint, receipts and permanent claims commit in one SQLite transaction. Only committed unseen receipts are eligible for animation. A save failure retains the immutable retry payload; retrying or opening a window cannot duplicate XP.
 6. On the next menu or app opening, unseen receipts display in date order, one at a time. XP is already credited independently of playback. Skip-one/skip-all change only presentation acknowledgement. Closing before acknowledgement leaves the receipt unseen for next time. Replaying or skipping cannot award or revoke XP.
 
-The settlement panel contains date, score, ordinary/improvement XP where applicable, and before/after level information. There is no settlement-review navigation entry or manual claim button. Effects are finite and cancelled when the panel closes. Visual tiers begin at levels 1, 18 and 58, separate from the Prism and Stellar theme unlocks at 20 and 60. Reduce Motion displays static feedback rather than requiring animated completion.
+The settlement panel contains date, score, ordinary/improvement XP where applicable, and before/after level information. There is no settlement-review navigation entry or manual claim button. Effects are finite and cancelled when the panel closes. Standard settlement effects are available at every typing level, with an announcement for actual level gains. Reduce Motion displays static feedback rather than requiring animated completion.
 
 A day without recorded input does not create a fake score or an empty animation. A settled day's genuinely late evidence cannot rewrite its finalized score. It remains in ordinary measurement history according to existing rules; the daily ledger conservatively excludes it from the already committed day rather than awarding twice. Startup ends continuity and partial live rate bins; it does not invent intervals across a restart.
 
@@ -157,32 +157,9 @@ Scaling is not a universal claim that every user now levels faster or slower: or
 
 ## Ranks and appearance
 
-The Levels & Appearance page displays rank badges, the current level, exact whole-number XP progress, remaining XP, a complete unlock roadmap, previews and settings. It uses the settled lifetime balance and the same integer level schedule above; a rank label or visual unlock does not create an additional award or spend XP. System, light and dark appearance are selectable independently of the app language.
+The Levels & Appearance page displays rank badges, the current level, exact whole-number XP progress, remaining XP, previews and settings. Typing progression uses the settled lifetime balance and the integer level schedule above. System, light and dark appearance are selectable independently of the app language.
 
-Classic and the Keyboard icon are available initially. Each later milestone in the appearance roadmap unlocks exactly one item, rather than a bundle:
-
-| Level | New selectable item |
-|---:|---|
-| 1 | Classic theme and Keyboard icon (initial choices) |
-| 5 | Wave menu icon |
-| 10 | Ocean theme |
-| 15 | Menu coloring by current estimated WPM |
-| 18 | Prism settlement effects |
-| 20 | Prism theme |
-| 25 | Orbit menu icon |
-| 30 | Forest theme |
-| 35 | Spark menu icon |
-| 40 | Ember theme |
-| 45 | Menu coloring by today's accepted keystroke count |
-| 50 | Graphite theme |
-| 55 | Bolt menu icon |
-| 58 | Stellar settlement effects |
-| 60 | Stellar theme |
-| 70 | Custom low/high speed colors and WPM range |
-| 80 | Rose theme |
-| 100 | Aurora theme |
-
-The roadmap has eighteen distinct milestone levels, covering nine themes, five menu icons, three color-control unlocks and two enhanced settlement-effect tiers; Level 1 supplies the two initial choices. The Level 70 controls customize both endpoint colors and the WPM range of the speed-color ramp. An appearance selection changes presentation only, without changing accepted-input rules, score, XP, settlement timing or level costs. Locked options do not become selectable through preview or stored preferences; after a data reset, a stored preference above the user's new level falls back to an available choice.
+All nine themes and eight menu icons are available immediately at every level. Appearance selection changes presentation only, without changing accepted-input rules, score, XP, settlement timing or level costs. Clearing typing history resets XP and typing levels but preserves selected appearances. Appearance choices also remain available when level data is unavailable. There is no cosmetic unlock roadmap.
 
 Current daily-score history, raw activity totals and personal-improvement/calibration details remain available. The release candidate removes the old `score-v2` disclosure/export and `practice-v1` chart, rather than deleting their underlying evidence or ledger. Existing awarded XP, migration markers, frozen baselines and milestone claims are retained.
 

@@ -75,7 +75,7 @@ The app is used throughout the day in the macOS menu bar. It follows the user's 
 **Key Characteristics:**
 - Crisp geometric vector theme artwork, with no raster theme assets or decorative blur.
 - Tabular numerals, factual labels and compact native controls.
-- Cosmetic progression unlocks nine themes and eight menu icons; standard motion is available at every level.
+- All nine themes, eight menu icons and standard motion are available at every level.
 - Speed-responsive menu motion in finite leases and bounded committed settlements; static theme art.
 
 ## Colors
@@ -124,17 +124,17 @@ Apply `filledControlTint` locally to segmented pickers and prominent buttons. Do
 
 ### Theme gallery
 
-Each preview shows the real theme geometry and palette, its name and unlock level. A checkmark and strong outline identify the selected theme. Locked choices keep their preview but are disabled and expose their required level through accessibility and help text. Hover only changes an available choice's outline.
+Each preview shows the real theme geometry and palette and its name. A checkmark and strong outline identify the selected theme. All choices are enabled, with accessible names and selection state. Hover changes the choice's outline.
 
-The roadmap contains 16 milestones for nine themes and eight menu icons. These are the only cosmetic unlocks.
+Typing level and XP progress remain independent of appearance selection; there is no unlock roadmap.
 
 ### Rank seal
 
-The seal is decorative; actual level and XP remain adjacent semantic text. Its shape and detail stay constant across levels; its symbol and palette follow the relevant theme. Rank geometry never implies a second progress scale. Levels above 100 continue using the highest unlocked rank identity.
+The seal is decorative; actual level and XP remain adjacent semantic text. Its shape and detail stay constant across levels; its symbol and palette follow the relevant theme. Rank geometry never implies a second progress scale. Levels above 100 continue using the highest rank identity.
 
 ### Menu response
 
-Rhythm, Ripple and Comet unlock at levels 15, 45 and 70. Their drawings respond to the percentage `clamp((WPM − lower) / (upper − lower), 0, 1)` through the saved WPM range. The default range is 20–120 WPM; finite endpoints must be within 0–1,000 WPM and at least 1 WPM apart. Missing, nonfinite or nonpositive WPM uses a separate idle drawing. Bar geometry, ring visibility and comet trails vary proportionally instead of selecting coarse speed tiers. Existing aggregate snapshots drive these patterns, including with the motion switch off, Reduce Motion or low power.
+Rhythm, Ripple and Comet are available at every level. Their drawings respond to the percentage `clamp((WPM − lower) / (upper − lower), 0, 1)` through the saved WPM range. The default range is 20–120 WPM; finite endpoints must be within 0–1,000 WPM and at least 1 WPM apart. Missing, nonfinite or nonpositive WPM uses a separate idle drawing. Bar geometry, ring visibility and comet trails vary proportionally instead of selecting coarse speed tiers. Existing aggregate snapshots drive these patterns, including with the motion switch off, Reduce Motion or low power.
 
 The 18-point template cache rounds only drawing precision to 1% and keys images by style and percentage, independent of levels or range settings. Its maximum is 311 images: five fixed drawings plus three icons with 101 active percentages and one idle drawing each. Menu text and icons keep the native system foreground color.
 

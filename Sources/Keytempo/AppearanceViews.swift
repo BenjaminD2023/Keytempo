@@ -3,40 +3,34 @@ import TypingCore
 
 private typealias AppearanceViewState<Value> = SwiftUI.State<Value>
 
-/// Presentation preferences use the committed balance. Pending daily XP does
-/// not unlock choices early; model setters enforce the same level gates.
+/// Typing progression and freely selectable presentation preferences.
 @MainActor struct ProgressionAppearanceView: View {
     @ObservedObject var model: AppModel
     @Environment(\.colorScheme) private var scheme
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @AppearanceViewState private var roadmapExpanded = false
 
     private var progress: DailyLevelProgress? {
         model.dailyRewardState.flatMap { DailyLevelProgress(totalXP: $0.totalXP) }
     }
     private var level: Int { progress?.level ?? 1 }
-    private var currentRank: AppearanceUnlock { AppearanceCatalog.themes.last { level >= $0.level } ?? AppearanceCatalog.themes[0] }
-    private var nextUnlock: AppearanceUnlock? { AppearanceCatalog.milestones.first { $0.level > level } }
+    private var currentRank: AppearanceOption { AppearanceCatalog.themes.last { level >= $0.level } ?? AppearanceCatalog.themes[0] }
     private var tint: Color { AppAppearanceStyle.accent(theme: model.effectiveAppearanceTheme, scheme: scheme) }
-    private var gold: Color { AppAppearanceStyle.accent(theme: "stellar", scheme: scheme) }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 26) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(L("等级与外观")).font(.title2.weight(.semibold))
-                    Text(L("用已结算 XP 解锁主题与图标。"))
+                    Text(L("所有主题与图标均可自由使用，打字等级持续成长。"))
                         .font(.callout).foregroundStyle(.secondary)
                 }
                 if let error = model.dailyRewardError {
                     Label(L(error), systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.orange)
                 }
                 levelProfile
-                nextUnlockSummary
                 appearanceControls
                 menuControls
-                unlockRoadmap
             }
             .padding(24).frame(maxWidth: 940, alignment: .leading).frame(maxWidth: .infinity)
         }.keytempoAppearance(model: model)
@@ -77,7 +71,7 @@ private typealias AppearanceViewState<Value> = SwiftUI.State<Value>
                     }.font(.caption).foregroundStyle(.secondary).monospacedDigit()
                 }
             } else {
-                Text(L("等级数据恢复后显示进度，基础外观仍可使用。"))
+                Text(L("等级数据恢复后显示进度，所有外观仍可使用。"))
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -87,50 +81,6 @@ private typealias AppearanceViewState<Value> = SwiftUI.State<Value>
                 .mask(LinearGradient(colors: [.clear, .black], startPoint: .leading, endPoint: .trailing))
         }
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.72), in: RoundedRectangle(cornerRadius: 14))
-    }
-
-    private var nextUnlockSummary: some View {
-        HStack(spacing: 12) {
-            if let nextUnlock {
-                Image(systemName: nextUnlock.symbol).font(.system(size: 20, weight: .regular))
-                    .foregroundStyle(tint).frame(width: 32).accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(L("下一解锁")).font(.caption).foregroundStyle(.secondary)
-                    Text(unlockTitle(nextUnlock)).font(.callout.weight(.medium))
-                }
-                Spacer(minLength: 12)
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text(L("等级 %@", nextUnlock.level.formatted())).font(.callout.weight(.medium))
-                    Text(L("累计 %@ XP", nextUnlock.threshold.formatted()))
-                        .font(.caption).monospacedDigit().foregroundStyle(.secondary)
-                }
-            } else {
-                Label(L("全部外观已解锁"), systemImage: "checkmark.circle").font(.callout).foregroundStyle(tint)
-                Spacer()
-            }
-        }
-    }
-
-    private var unlockRoadmap: some View {
-        DisclosureGroup(isExpanded: $roadmapExpanded) {
-            VStack(spacing: 0) {
-                ForEach(AppearanceCatalog.milestones) { unlock in
-                    HStack(spacing: 12) {
-                        Image(systemName: unlock.symbol).frame(width: 24)
-                            .foregroundStyle(level >= unlock.level ? tint : .secondary).accessibilityHidden(true)
-                        Text(unlockTitle(unlock)).font(.callout)
-                        Spacer(minLength: 8)
-                        Text(L("等级 %@", unlock.level.formatted())).font(.caption).monospacedDigit()
-                        Text(L("%@ XP", unlock.threshold.formatted())).font(.caption).monospacedDigit()
-                            .foregroundStyle(.secondary).frame(minWidth: 95, alignment: .trailing)
-                        Image(systemName: level >= unlock.level ? "checkmark.circle.fill" : "lock")
-                            .foregroundStyle(level >= unlock.level ? tint : .secondary).frame(width: 18)
-                            .accessibilityLabel(level >= unlock.level ? L("已解锁") : L("尚未解锁"))
-                    }.padding(.vertical, 11).accessibilityElement(children: .combine)
-                    if unlock.id != AppearanceCatalog.milestones.last?.id { Divider() }
-                }
-            }.padding(.top, 10)
-        } label: { Text(L("等级路线图")).font(.headline) }
     }
 
     private var appearanceControls: some View {
@@ -150,7 +100,7 @@ private typealias AppearanceViewState<Value> = SwiftUI.State<Value>
             Text(L("主题")).font(.callout.weight(.medium)).padding(.top, 4)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 12)], spacing: 12) {
                 ForEach(AppearanceCatalog.themes) { theme in
-                    ThemeChoice(theme: theme, unlocked: level >= theme.level,
+                    ThemeChoice(theme: theme, level: level,
                                 selected: model.effectiveAppearanceTheme == theme.id) {
                         model.setAppearanceTheme(theme.id)
                     }
@@ -171,14 +121,14 @@ private typealias AppearanceViewState<Value> = SwiftUI.State<Value>
                 AppearanceSettingRow(title: L("图标样式")) {
                     Picker(L("图标样式"), selection: Binding(get: { model.effectiveMenuBarStyle }, set: model.setMenuBarStyle)) {
                         ForEach(AppearanceCatalog.icons) { icon in
-                            Text(optionLabel(icon.name, required: icon.level)).tag(icon.id).disabled(level < icon.level)
+                            Text(L(icon.name)).tag(icon.id)
                         }
                     }.labelsHidden().frame(width: 240)
                 }
                 Divider().padding(.horizontal, 16)
                 menuMotionControls
             }.background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 14))
-            Text(L("已解锁的选择会自动保存，并立即应用。"))
+            Text(L("外观选择会自动保存，并立即应用。"))
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -263,14 +213,6 @@ private typealias AppearanceViewState<Value> = SwiftUI.State<Value>
         guard let value, value.isFinite, value >= 0 else { return "— " + unit }
         return "≈" + value.formatted(.number.precision(.fractionLength(0))) + " " + unit
     }
-    private func unlockTitle(_ unlock: AppearanceUnlock) -> String {
-        if AppearanceCatalog.themes.contains(where: { $0.id == unlock.id }) { return L("%@ 主题", L(unlock.name)) }
-        if AppearanceCatalog.icons.contains(where: { $0.id == unlock.id }) { return L("%@ 图标", L(unlock.name)) }
-        return L(unlock.name)
-    }
-    private func optionLabel(_ title: String, required: Int) -> String {
-        level >= required ? L(title) : L("%@ · 等级 %@ 解锁", L(title), required.formatted())
-    }
 }
 
 /// Keep edits local until both endpoints are valid, then persist one range.
@@ -325,8 +267,8 @@ private struct MenuIconRangeControls: View {
 }
 
 private struct ThemeChoice: View {
-    let theme: AppearanceUnlock
-    let unlocked: Bool
+    let theme: AppearanceOption
+    let level: Int
     let selected: Bool
     let action: () -> Void
     @Environment(\.colorScheme) private var scheme
@@ -338,31 +280,26 @@ private struct ThemeChoice: View {
             VStack(alignment: .leading, spacing: 0) {
                 ZStack(alignment: .leading) {
                     ThemeArtwork(theme: theme.id)
-                    RankSeal(theme: theme.id, level: theme.level, size: 49).padding(.leading, 10)
+                    RankSeal(theme: theme.id, level: level, size: 49).padding(.leading, 10)
                 }.frame(height: 73)
                 HStack(alignment: .center, spacing: 7) {
                     Text(L(theme.name)).font(.callout.weight(.medium)).foregroundStyle(.primary)
                     Spacer(minLength: 4)
-                    if !unlocked {
-                        Text(L("等级 %@", theme.level.formatted())).font(.caption).foregroundStyle(.secondary)
-                        Image(systemName: "lock.fill").font(.system(size: 9)).foregroundStyle(.secondary)
-                    } else if selected {
+                    if selected {
                         Image(systemName: "checkmark.circle.fill").font(.system(size: 14)).foregroundStyle(tint)
-                    } else {
-                        Text(L("等级 %@", theme.level.formatted())).font(.caption).foregroundStyle(.secondary)
                     }
                 }.padding(.horizontal, 13).padding(.top, 1).padding(.bottom, 12)
             }
             .background(AppAppearanceStyle.canvas(theme: theme.id, scheme: scheme), in: RoundedRectangle(cornerRadius: 12))
             .overlay {
-                RoundedRectangle(cornerRadius: 12).strokeBorder(selected ? tint : hovered && unlocked ? tint.opacity(0.55) : Color.primary.opacity(contrast == .increased ? 0.4 : 0.1), lineWidth: selected ? 1.8 : 1)
+                RoundedRectangle(cornerRadius: 12).strokeBorder(selected ? tint : hovered ? tint.opacity(0.55) : Color.primary.opacity(contrast == .increased ? 0.4 : 0.1), lineWidth: selected ? 1.8 : 1)
             }
             .contentShape(RoundedRectangle(cornerRadius: 12))
-        }.buttonStyle(.plain).disabled(!unlocked)
+        }.buttonStyle(.plain)
             .onHover { hovered = $0 }
-            .accessibilityLabel(unlocked ? L("%@ 主题", L(theme.name)) : L("%@ · 等级 %@ 解锁", L(theme.name), theme.level.formatted()))
-            .accessibilityValue(selected ? L("已选择") : unlocked ? L("已解锁") : L("尚未解锁"))
-            .help(unlocked ? L("%@ 主题", L(theme.name)) : L("%@ · 等级 %@ 解锁", L(theme.name), theme.level.formatted()))
+            .accessibilityLabel(L("%@ 主题", L(theme.name)))
+            .accessibilityValue(selected ? L("已选择") : L("未选择"))
+            .help(L("%@ 主题", L(theme.name)))
     }
 }
 

@@ -278,8 +278,8 @@ struct HistoryDay: Identifiable {
     var onAppearanceUpdate: (() -> Void)?
     var onMenuEffectPreview: (() -> Void)?
     var appearanceLevel: Int { DailyLevelProgress(totalXP: dailyRewardState?.totalXP ?? 0)?.level ?? 1 }
-    var effectiveAppearanceTheme: String { AppearancePolicy.effective(appearanceTheme, choice: .theme, level: appearanceLevel) }
-    var effectiveMenuBarStyle: String { AppearancePolicy.effective(menuBarStyle, choice: .icon, level: appearanceLevel) }
+    var effectiveAppearanceTheme: String { AppearancePolicy.effective(appearanceTheme, choice: .theme) }
+    var effectiveMenuBarStyle: String { AppearancePolicy.effective(menuBarStyle, choice: .icon) }
     var appearanceMenuWPM: Double? {
         guard !isPaused, hasInputPermission, !selectedSpeedIsRecent, phase != "idle" else { return nil }
         let speed = selectedMenuSpeed
@@ -968,11 +968,11 @@ struct HistoryDay: Identifiable {
         appearanceStorage?.set(appearanceMode, forKey: "appearanceMode"); onAppearanceUpdate?()
     }
     func setAppearanceTheme(_ value: String) {
-        guard AppearancePolicy.effective(value, choice: .theme, level: appearanceLevel) == value else { return }
+        guard AppearancePolicy.effective(value, choice: .theme) == value else { return }
         appearanceTheme = value; appearanceStorage?.set(value, forKey: "appearanceTheme"); onAppearanceUpdate?()
     }
     func setMenuBarStyle(_ value: String) {
-        guard AppearancePolicy.effective(value, choice: .icon, level: appearanceLevel) == value else { return }
+        guard AppearancePolicy.effective(value, choice: .icon) == value else { return }
         menuBarStyle = value; appearanceStorage?.set(value, forKey: "menuBarStyle"); onAppearanceUpdate?()
     }
     func setMenuIconMotionEnabled(_ enabled: Bool) {

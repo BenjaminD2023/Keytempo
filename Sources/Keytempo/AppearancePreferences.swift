@@ -3,16 +3,15 @@ import SwiftUI
 import TypingCore
 import TypingStore
 
-struct AppearanceUnlock: Identifiable {
+struct AppearanceOption: Identifiable {
     let id: String
     let name: String
     let symbol: String
-    let level: Int
-    var threshold: Int { DailyLevelSchedule.threshold(for: level) ?? 0 }
+    let level: Int // Rank artwork milestone; never an availability requirement.
 }
 
 enum AppearanceCatalog {
-    static let themes: [AppearanceUnlock] = [
+    static let themes: [AppearanceOption] = [
         .init(id: "classic", name: "经典", symbol: "circle.hexagongrid", level: 1),
         .init(id: "ocean", name: "海洋", symbol: "water.waves", level: 10),
         .init(id: "prism", name: "棱光", symbol: "diamond", level: 20),
@@ -23,7 +22,7 @@ enum AppearanceCatalog {
         .init(id: "rose", name: "玫瑰", symbol: "camera.macro", level: 80),
         .init(id: "aurora", name: "极光", symbol: "light.beacon.max", level: 100)
     ]
-    static let icons: [AppearanceUnlock] = [
+    static let icons: [AppearanceOption] = [
         .init(id: "keyboard", name: "键盘", symbol: "keyboard", level: 1),
         .init(id: "wave", name: "声波", symbol: "waveform", level: 5),
         .init(id: "rhythm", name: "节奏柱", symbol: "chart.bar.fill", level: 15),
@@ -33,22 +32,17 @@ enum AppearanceCatalog {
         .init(id: "bolt", name: "闪电", symbol: "bolt.fill", level: 55),
         .init(id: "comet", name: "流星", symbol: "sparkle", level: 70)
     ]
-    static let milestones: [AppearanceUnlock] = (themes + icons.filter { $0.level > 1 }).sorted { $0.level < $1.level }
 }
 
-/// Cosmetic unlocks never change measurement, XP or the level schedule.
+/// All valid appearance choices are available independently of typing progression.
 enum AppearancePolicy {
     enum Choice { case theme, icon }
     static func mode(_ value: String) -> String { ["system", "light", "dark"].contains(value) ? value : "system" }
-    static func requiredLevel(_ value: String, choice: Choice) -> Int? {
+    static func effective(_ value: String, choice: Choice) -> String {
         switch choice {
-        case .theme: return AppearanceCatalog.themes.first { $0.id == value }?.level
-        case .icon: return AppearanceCatalog.icons.first { $0.id == value }?.level
+        case .theme: return AppearanceCatalog.themes.contains { $0.id == value } ? value : "classic"
+        case .icon: return AppearanceCatalog.icons.contains { $0.id == value } ? value : "keyboard"
         }
-    }
-    static func effective(_ value: String, choice: Choice, level: Int) -> String {
-        if let required = requiredLevel(value, choice: choice), level >= required { return value }
-        switch choice { case .theme: return "classic"; case .icon: return "keyboard" }
     }
 }
 
@@ -140,10 +134,6 @@ extension View {
                  ("ripple", 45), ("bolt", 55), ("comet", 70)]
     expect(AppearanceCatalog.themes.map(\.id) == themes.map(\.0), "nine ordered theme choices")
     expect(AppearanceCatalog.icons.map(\.id) == icons.map(\.0), "eight ordered icon choices")
-    let milestones = AppearanceCatalog.milestones.map(\.level)
-    let milestoneIDs = Set(AppearanceCatalog.milestones.map(\.id))
-    expect(milestones == [1, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 70, 80, 100], "theme and icon unlock levels")
-    expect(milestoneIDs == Set(themes.map(\.0) + icons.dropFirst().map(\.0)), "roadmap only contains themes and icons")
     for appearanceName in [NSAppearance.Name.aqua, .darkAqua] {
         guard let appearance = NSAppearance(named: appearanceName) else {
             failures.append("FAIL: appearance missing native appearance for filled-control contrast checks")
@@ -168,15 +158,10 @@ extension View {
     expect(AppAppearanceStyle.rankTheme(level: 10_000) == "aurora", "unbounded levels retain highest rank artwork")
     failures += runProportionalMenuIconChecks()
     for (choice, baseline, options) in [(AppearancePolicy.Choice.theme, "classic", themes), (.icon, "keyboard", icons)] {
-        for (value, level) in options {
-            expect(AppearancePolicy.requiredLevel(value, choice: choice) == level, "\(value) unlock threshold")
-            expect(AppearancePolicy.effective(value, choice: choice, level: level) == value, "\(value) unlocks exactly at \(level)")
-            if level > 1 {
-                expect(AppearancePolicy.effective(value, choice: choice, level: level - 1) == baseline, "\(value) remains locked before threshold")
-                expect(AppearancePolicy.effective(value, choice: choice, level: 1) == baseline, "\(value) clear/reset fallback")
-            }
+        for (value, _) in options {
+            expect(AppearancePolicy.effective(value, choice: choice) == value, "\(value) is freely available")
         }
-        expect(AppearancePolicy.effective("invalid", choice: choice, level: 100) == baseline, "invalid stored option fallback")
+        expect(AppearancePolicy.effective("invalid", choice: choice) == baseline, "invalid stored option fallback")
     }
     expect(AppearancePolicy.mode("invalid") == "system", "invalid mode follows system")
     expect(AppAppearanceStyle.menuSymbol(style: "spark") == "sparkles", "native icon mapping")
@@ -278,7 +263,7 @@ extension View {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("Keytempo-appearance-check-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: root) }
 
-    for expectedLevel in AppearanceCatalog.milestones.map(\.level) {
+    for expectedLevel in Set((AppearanceCatalog.themes + AppearanceCatalog.icons).map(\.level)).sorted() {
         guard let seedXP = DailyLevelSchedule.threshold(for: expectedLevel), seedXP.isMultiple(of: DailyRewardPolicy.legacyScale) else {
             failures.append("FAIL: appearance preferences exact level \(expectedLevel) threshold")
             continue
@@ -300,7 +285,7 @@ extension View {
             try store.save([preservedRow], dailyRewards: seed.checkpoint(), batchID: "appearance-seed-\(UUID().uuidString)")
             let historyBefore = try store.query(since: "0000-01-01")
             let model = AppModel(dataDirectory: directory, monitoringEnabled: false, appearancePreferences: preferences)
-            expect(model.appearanceLevel == expectedLevel, "seed unlocks exactly level \(expectedLevel)")
+            expect(model.appearanceLevel == expectedLevel, "seed preserves typing level \(expectedLevel)")
             let dailyBefore = model.dailyRewardState, legacyBefore = model.rewardState
             let storedBefore = try store.loadDailyRewardState()?.totalXP
             expect(model.appearanceMode == "system" && model.appearanceTheme == "classic" && model.menuBarStyle == "keyboard",
@@ -333,19 +318,17 @@ extension View {
                    "motion opt-out persists and prevents previews")
 
             for theme in AppearanceCatalog.themes {
-                let previous = model.appearanceTheme
                 model.setAppearanceTheme(theme.id)
-                expect(model.appearanceTheme == (expectedLevel >= theme.level ? theme.id : previous),
-                       "theme setter enforces \(theme.id) threshold at level \(expectedLevel)")
+                expect(model.appearanceTheme == theme.id,
+                       "theme setter accepts \(theme.id) at level \(expectedLevel)")
             }
             for icon in AppearanceCatalog.icons {
-                let previous = model.menuBarStyle
                 model.setMenuBarStyle(icon.id)
-                expect(model.menuBarStyle == (expectedLevel >= icon.level ? icon.id : previous),
-                       "icon setter enforces \(icon.id) threshold at level \(expectedLevel)")
+                expect(model.menuBarStyle == icon.id,
+                       "icon setter accepts \(icon.id) at level \(expectedLevel)")
             }
-            let theme = AppearanceCatalog.themes.last { expectedLevel >= $0.level }!.id
-            let icon = AppearanceCatalog.icons.last { expectedLevel >= $0.level }!.id
+            let theme = AppearanceCatalog.themes.last!.id
+            let icon = AppearanceCatalog.icons.last!.id
             model.setAppearanceTheme("invalid"); model.setMenuBarStyle("invalid")
             expect(model.appearanceTheme == theme && model.menuBarStyle == icon, "invalid choices preserve the current selection")
             model.setAppearanceMode("invalid")
@@ -382,18 +365,18 @@ extension View {
             if [10, 55, 100].contains(expectedLevel) {
                 restored.clearHistory()
                 waitFor({ restored.dailyRewardState?.totalXP == 0 && restored.appearanceLevel == 1 }, "explicit clear completes and resets XP")
-                expect(restored.effectiveAppearanceTheme == "classic" && restored.effectiveMenuBarStyle == "keyboard",
-                       "clear history falls back to baseline cosmetics")
+                expect(restored.effectiveAppearanceTheme == theme && restored.effectiveMenuBarStyle == icon,
+                       "clear history preserves selected cosmetics")
                 expect(restored.appearanceTheme == theme && restored.menuBarStyle == icon && restored.appearanceMode == "dark" &&
                        restored.menuIconMotionEnabled && restored.menuIconLowWPM == 40 && restored.menuIconHighWPM == 240,
-                       "clear preserves appearance preferences and range while applying level fallback")
+                       "clear preserves appearance preferences and range independently of level")
                 restored.previewMenuEffects()
                 expect(restoredPreviewCalls == 2, "clear history keeps standard motion preview available")
                 restored.flushBeforeExit()
                 let cleared = AppModel(dataDirectory: directory, monitoringEnabled: false, appearancePreferences: preferences)
                 expect(cleared.dailyRewardState?.totalXP == 0 && cleared.appearanceLevel == 1 &&
-                       cleared.effectiveAppearanceTheme == "classic" && cleared.effectiveMenuBarStyle == "keyboard" && cleared.menuIconMotionEnabled,
-                       "clear fallback, zero XP and enabled motion survive reload")
+                       cleared.effectiveAppearanceTheme == theme && cleared.effectiveMenuBarStyle == icon && cleared.menuIconMotionEnabled,
+                       "selected cosmetics, zero XP and enabled motion survive reload")
                 expect(cleared.menuIconLowWPM == 40 && cleared.menuIconHighWPM == 240, "cleared history retains the custom range after reload")
                 cleared.flushBeforeExit()
             } else { restored.flushBeforeExit() }
@@ -430,8 +413,8 @@ extension View {
                legacy.menuIconLowWPM == 20 && legacy.menuIconHighWPM == 120 &&
                legacy.appearanceMenuWPM == clean.appearanceMenuWPM && legacy.appearanceLevel == clean.appearanceLevel &&
                legacy.dailyRewardState?.totalXP == clean.dailyRewardState?.totalXP, "legacy color preferences have no effect on current appearance or XP")
-        expect(legacy.effectiveAppearanceTheme == "classic" && legacy.effectiveMenuBarStyle == "keyboard",
-               "stored locked choices use baseline cosmetics without discarding the selection")
+        expect(legacy.effectiveAppearanceTheme == "aurora" && legacy.effectiveMenuBarStyle == "bolt",
+               "previously locked stored choices apply immediately at level one")
         expect(NSDictionary(dictionary: domainBefore).isEqual(to: legacyPreferences.persistentDomain(forName: legacySuite) ?? [:]),
                "loading old preferences does not rewrite the preference domain")
         clean.flushBeforeExit(); legacy.flushBeforeExit()

@@ -24,8 +24,18 @@ The project changed its public version convention before the `0.3.0` release. Hi
 | 0.5.1 | 0.5.1 / `v0.5.1` | 23 | Stable: proportional menu icons and typing/count display by default |
 | 0.5.2 | 0.5.2 / `v0.5.2` | 24 | Stable: midnight XP credit and settlement playback on opening |
 | 0.5.3 | 0.5.3 / `v0.5.3` | 25 | Stable: global keyboard compatibility and input-switch recovery |
+| 0.5.4 | 0.5.4 / `v0.5.4` | 26 | Stable: freely available appearances with independent typing levels |
 
 Already published signed archives, source tags and download URLs retain their original `1.x` identifiers. Their changelog labels are normalized; their embedded app versions have not been rewritten. New releases use `0.x` app versions and tags. The internal build number continues increasing, so Sparkle can offer `0.3.0` (build 11) to apps displaying `1.2.0` (build 9) or `1.2.1` (build 10).
+
+## [0.5.4] - 2026-11-05
+
+Stable release, internal build 26.
+
+### Changed
+
+- Make all nine themes and eight menu icons available immediately at every typing level. Remove appearance locks, required-level labels and the unlock roadmap.
+- Keep typing levels, rank badges, settled XP and level progress unchanged. Appearance selections remain active after clearing typing history or when level data is unavailable.
 
 ## [0.5.3] - 2026-10-31
 

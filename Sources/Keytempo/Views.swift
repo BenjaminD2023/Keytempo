@@ -208,7 +208,7 @@ struct MenuContent: View {
 struct StatisticsView: View {
     @ObservedObject var model: AppModel
     private var level: Int { model.dailyRewardState.flatMap { DailyLevelProgress(totalXP: $0.totalXP) }?.level ?? 1 }
-    private var rank: AppearanceUnlock { AppearanceCatalog.themes.last { level >= $0.level } ?? AppearanceCatalog.themes[0] }
+    private var rank: AppearanceOption { AppearanceCatalog.themes.last { level >= $0.level } ?? AppearanceCatalog.themes[0] }
 
     var body: some View {
         VStack(spacing: 0) {

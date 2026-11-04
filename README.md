@@ -4,7 +4,7 @@ A native macOS menu bar app for understanding your everyday typing rhythm. Built
 
 [简体中文](README.zh-CN.md) · [Releases](https://github.com/BenjaminD2023/Keytempo/releases) · [Changelog](CHANGELOG.md) · [License](LICENSE) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
 
-**Stable release: 0.5.3 (build 25).** [Download for Apple Silicon](https://github.com/BenjaminD2023/Keytempo/releases/download/v0.5.3/Keytempo-0.5.3-macos-arm64.zip) · [Release notes](https://github.com/BenjaminD2023/Keytempo/releases/tag/v0.5.3). Requires macOS 13 or later.
+**Stable release: 0.5.4 (build 26).** [Download for Apple Silicon](https://github.com/BenjaminD2023/Keytempo/releases/download/v0.5.4/Keytempo-0.5.4-macos-arm64.zip) · [Release notes](https://github.com/BenjaminD2023/Keytempo/releases/tag/v0.5.4). Requires macOS 13 or later.
 
 ## What it measures
 
@@ -30,7 +30,7 @@ The daily overview and menu popup show one **estimated keystroke counter** for e
 
 ## Activity, Typing Score and XP
 
-Stable release **0.5.3 (build 25)** uses the daily scoring and midnight XP-credit policy below. See the [changelog](CHANGELOG.md) and [validation notes](docs/VALIDATION.md) for release changes and executed checks.
+Stable release **0.5.4 (build 26)** uses the daily scoring and midnight XP-credit policy below. See the [changelog](CHANGELOG.md) and [validation notes](docs/VALIDATION.md) for release changes and executed checks.
 
 The **Activity** tab provides a date-selectable hourly timeline, automatic sessions, separate speed/consistency trends, and a daily-score chart. Hours and sessions show accepted keystrokes, actual typing time and weighted estimated WPM. Sessions end after a five-minute gap or a pause, sleep, quit, day, timezone or counting-rule boundary. Elapsed span is separate from measured typing time; interruptions add no time.
 
@@ -54,14 +54,9 @@ Verified personal improvement still requires completed-day evidence, with frozen
 
 Existing XP and every level threshold are both multiplied by **150**, preserving the previous level and proportional progress. Level 20 requires **75,000 lifetime XP**; level 60 requires **750,000**. For example, an old balance of 520 becomes 78,000: still Level 20, now 3,000/7,500 XP toward Level 21. Levels have no fixed maximum. The daily policy starts at first activation; older score records and earned XP stay preserved on disk, without old score charts or reward exports in the app. No historical daily scores or second awards are fabricated. The previously unpublished 0.4.2 work was included in 0.5.0-beta.
 
-The **Levels & Appearance** page brings rank badges, exact current/required XP, remaining XP, a 16-milestone unlock roadmap, previews and appearance settings together. Choose system, light or dark appearance. The roadmap spreads rewards across separate milestones, with one new item per milestone after the initial Classic theme and keyboard icon:
+The **Levels & Appearance** page brings rank badges, exact current/required XP, remaining XP, previews and appearance settings together. Choose system, light or dark appearance. All nine themes (Classic, Ocean, Prism, Forest, Ember, Graphite, Stellar, Rose and Aurora) and eight menu icons (Keyboard, Wave, Rhythm, Orbit, Spark, Ripple, Bolt and Comet) are available immediately at every typing level.
 
-| Choice | Unlock levels |
-|---|---|
-| Themes | Classic 1 · Ocean 10 · Prism 20 · Forest 30 · Ember 40 · Graphite 50 · Stellar 60 · Rose 80 · Aurora 100 |
-| Menu icons | Keyboard 1 · Wave 5 · Rhythm 15 · Orbit 25 · Spark 35 · Ripple 45 · Bolt 55 · Comet 70 |
-
-Cosmetic unlocks consist of themes and menu icons. Unlocks use settled lifetime XP; previews and selections do not spend XP. Menu icons and text use the native macOS system foreground color. These local appearance choices do not change input filtering, scores, XP or level thresholds. Current daily history and personal-improvement calibration remain available in Activity.
+Typing levels continue to grow with settled lifetime XP. Appearance selections do not spend XP and remain available after clearing history. Menu icons and text use the native macOS system foreground color. These local appearance choices do not change input filtering, scores, XP or level thresholds. Current daily history and personal-improvement calibration remain available in Activity.
 
 Since 0.5.1, Rhythm, Ripple and Comet change their monochrome patterns proportionally with current estimated WPM: bar height, ring visibility and trail length follow the percentage through your selected range. **Levels & Appearance** lets you set the lower and upper WPM endpoints, defaulting to **20–120 WPM**. Endpoints must be between 0 and 1,000 WPM, with at least 1 WPM between them. Values outside the range use its minimum or maximum response; a missing, nonfinite or nonpositive current rate uses the idle drawing. Existing aggregate snapshots drive these patterns, including with motion disabled, Reduce Motion or low power. The panel shows static examples across the selected range, and a bounded cache stores patterns at 1% increments.
 
@@ -75,7 +70,7 @@ The theme gallery uses distinct vector artwork and geometric rank seals, with co
 
 - Current menu bar speed or WPM while typing with today's count otherwise, a ten-minute average in the popup, daily average/totals, pause/resume and optional launch at login.
 - Hourly activity, automatic sessions, optional local per-app activity, Monkeytype-style consistency, daily Typing Score, score-based XP, midnight settlement and exact levels.
-- A Levels & Appearance page with exact XP progress, a roadmap for theme and icon unlocks, nine themes, eight menu icons including three with speed-responsive shapes, and a standard menu-motion switch, configurable WPM range and preview.
+- A Levels & Appearance page with exact XP progress, nine freely available themes, eight menu icons including three with speed-responsive shapes, and a standard menu-motion switch, configurable WPM range and preview.
 - English and Simplified Chinese app interfaces, independent of input-source language.
 - Combined input statistics across all accepted languages, without recorded-language selection.
 - Combined 7-day, 30-day, 90-day, one-year and five-year history, separate KPM columns and CSV export.
@@ -87,7 +82,7 @@ History uses daily periods for ranges up to 90 days, weekly periods for one year
 
 ## Install
 
-Download [Keytempo 0.5.3 for Apple Silicon](https://github.com/BenjaminD2023/Keytempo/releases/download/v0.5.3/Keytempo-0.5.3-macos-arm64.zip), extract it, and move `Keytempo.app` to `/Applications` or `~/Applications`. Keep that location fixed before granting permissions. Other versions and checksums are available in [Releases](https://github.com/BenjaminD2023/Keytempo/releases).
+Download [Keytempo 0.5.4 for Apple Silicon](https://github.com/BenjaminD2023/Keytempo/releases/download/v0.5.4/Keytempo-0.5.4-macos-arm64.zip), extract it, and move `Keytempo.app` to `/Applications` or `~/Applications`. Keep that location fixed before granting permissions. Other versions and checksums are available in [Releases](https://github.com/BenjaminD2023/Keytempo/releases).
 
 Current maintainer builds use a stable local **Apple Development** signing identity; they are **not Developer ID distribution or notarized**. macOS may still require first-launch approval. Older 0.1.1 downloads (original app/tag `1.1.1`) were ad hoc signed, which tied permissions to a changing binary hash. Migrating to the new certificate identity requires one new grant. On the maintainer Mac, an actual Sparkle update from original `1.2.0` build 9 to original `1.2.1` build 10 retained both Input Monitoring and Accessibility authorization after relaunch and an in-app recheck, without changing permission settings. This local result does not guarantee every Mac or confirm every app's editable-control coverage; future builds must preserve the signing identity and installation path. Release assets identify their architecture; the locally tested build and automatic-update channel are Apple Silicon (`arm64`). Intel execution has not been verified.
 
@@ -111,7 +106,7 @@ Choose **Check for Updates…** in the app menu or Settings to check manually, t
 
 The 0.1.1 app (original app/tag `1.1.1`) does not contain an updater; install the first updater-enabled release manually once. Updates do not grant privacy permissions, bypass macOS approval or convert global Chinese keystrokes into confirmed CPM. Certificate signing and download signatures protect different parts of the update process. See [release instructions](docs/RELEASING.md) for publisher setup and known signing limits.
 
-Keytempo uses `0.x` versions: historical `1.1.0` and `1.2.0` are documented as `0.1.0` and `0.2.0`. Version `0.5.3` uses build 25 and fixes global keyboard compatibility across input languages, input-source handoffs and Caps Lock transitions. Version `0.5.2` uses build 24 and credits ended days at midnight without waiting for sleep, with settlement animations on the next menu/app opening. Version `0.5.1` uses build 23, brings proportional icons and the configurable WPM range to the stable channel, and makes the typing/count menu mode the default for unset preferences. Version `0.5.1-beta` uses build 22 and adds proportional icon response with a configurable animation range on the preview channel. Version `0.5.0` uses build 21 and brings daily score, deferred XP settlement, themes and speed-responsive icons to the stable channel. Version `0.4.1` uses build 17 and adds accumulating score, independent XP/levels and verified personal improvement. Version `0.4.0` build 16 introduced activity analytics and the legacy practice score. Version `0.3.2` build 15 combined language metrics and clarified the menu's WPM display. Version `0.3.1` build 14 introduced Chinese input recovery and the optional typing/count menu mode; its tag and downloads are preserved. Existing signed `1.x` downloads and tags also retain their original identifiers. Internal build numbers continue increasing for updater compatibility. Release notes describe the current version's changes; the [complete changelog and version mapping](CHANGELOG.md) retains the full history.
+Keytempo uses `0.x` versions: historical `1.1.0` and `1.2.0` are documented as `0.1.0` and `0.2.0`. Version `0.5.4` uses build 26 and makes every appearance available while preserving typing levels. Version `0.5.3` uses build 25 and fixes global keyboard compatibility across input languages, input-source handoffs and Caps Lock transitions. Version `0.5.2` uses build 24 and credits ended days at midnight without waiting for sleep, with settlement animations on the next menu/app opening. Version `0.5.1` uses build 23, brings proportional icons and the configurable WPM range to the stable channel, and makes the typing/count menu mode the default for unset preferences. Version `0.5.1-beta` uses build 22 and adds proportional icon response with a configurable animation range on the preview channel. Version `0.5.0` uses build 21 and brings daily score, deferred XP settlement, themes and speed-responsive icons to the stable channel. Version `0.4.1` uses build 17 and adds accumulating score, independent XP/levels and verified personal improvement. Version `0.4.0` build 16 introduced activity analytics and the legacy practice score. Version `0.3.2` build 15 combined language metrics and clarified the menu's WPM display. Version `0.3.1` build 14 introduced Chinese input recovery and the optional typing/count menu mode; its tag and downloads are preserved. Existing signed `1.x` downloads and tags also retain their original identifiers. Internal build numbers continue increasing for updater compatibility. Release notes describe the current version's changes; the [complete changelog and version mapping](CHANGELOG.md) retains the full history.
 
 ## Build and test
 
