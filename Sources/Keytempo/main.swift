@@ -163,11 +163,13 @@ import TypingCore
             // should not rebuild a hidden SwiftUI hierarchy.
             popover.contentViewController = NSHostingController(rootView: MenuContent(model: model))
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            model.setTenMinuteWindowVisible(true)
             model.requestSettlementPresentation()
         }
     }
     func popoverDidClose(_ notification: Notification) {
         menuIconEffects?.cancel()
+        model.setTenMinuteWindowVisible(false)
         popover.contentViewController = nil
         // The animated close callback can arrive after the synchronous handoff
         // finishes. Once the panel owns the queue, closing the popover must not

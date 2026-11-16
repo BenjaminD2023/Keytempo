@@ -215,11 +215,18 @@ public struct DailyRewardEngine: Sendable {
         return calendar.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2]))
     }
 
+    /// The stability-only upgrade must not invalidate an already measured
+    /// reward day. Changes to any counting setting remain incompatible.
+    private func compatibleRewardRule(_ incoming: String, existing: String?) -> String {
+        guard let existing, existing.hasPrefix("adaptive-v4-"), incoming.hasPrefix("adaptive-v5-"),
+              existing.dropFirst("adaptive-v4-".count) == incoming.dropFirst("adaptive-v5-".count) else { return incoming }
+        return existing
+    }
+
     public mutating func record(input: ClassifiedInput, result: StatisticsRecordResult, rule: String) {
         guard error == nil, input.time.isFinite, input.date.timeIntervalSince1970.isFinite,
               input.source == .global, input.evidence == .probable, input.category.isEffective,
-              result.deltas.filter({ $0.evidence == .probable }).reduce(0, { $0 + $1.keys }) == 1,
-              lastInputTime.map({ input.time > $0 }) ?? true else { return }
+              result.deltas.filter({ $0.evidence == .probable }).reduce(0, { $0 + $1.keys }) == 1 else { return }
         guard result.acceptedIntervals.count <= 3, !rule.isEmpty, rule.utf8.count <= 512 else { error = .invalidInput; return }
         var transaction = self
         transaction.process(input: input, result: result, rule: rule)
@@ -228,26 +235,46 @@ public struct DailyRewardEngine: Sendable {
 
     private mutating func process(input: ClassifiedInput, result: StatisticsRecordResult, rule: String) {
         var input = input
+        var dayShift = 0
         // Reward days do not move backward with the wall clock. Map a rolled
         // back local date into the still-open logical day, retaining time of day.
         if day(input.date) < state.currentDay, let start = date(state.currentDay) {
             let oldStart = calendar.startOfDay(for: input.date)
             let shift = calendar.dateComponents([.day], from: oldStart, to: start).day ?? 0
-            if let corrected = calendar.date(byAdding: .day, value: shift, to: input.date) { input.date = corrected }
+            if let corrected = calendar.date(byAdding: .day, value: shift, to: input.date) {
+                input.date = corrected; dayShift = shift
+            }
         }
         advance(to: input.date)
         guard error == nil else { return }
-        let intervals = chainStartTime.map { start in result.acceptedIntervals.filter { $0.startTime >= start } } ?? []
+        let rewardRule = compatibleRewardRule(rule, existing: state.current?.rule)
+        // Counts have already been accepted by the measurement engine. A
+        // repeated/reversed timestamp starts fresh timing coverage, not a lost key.
+        if lastInputTime.map({ input.time <= $0 }) ?? false { chainStartTime = input.time }
+        let intervals: [AcceptedTypingInterval] = chainStartTime.map { start in result.acceptedIntervals.filter { $0.startTime >= start }.map { interval in
+            let shifted = interval.startDate.flatMap { anchor in
+                dayShift == 0 ? anchor : calendar.date(byAdding: .day, value: dayShift, to: anchor)
+            }
+            return AcceptedTypingInterval(startTime: interval.startTime, endTime: interval.endTime,
+                                          evidence: interval.evidence, language: interval.language,
+                                          ruleID: interval.ruleID == rule ? rewardRule : interval.ruleID, startDate: shifted)
+        } } ?? []
         let qualified = StatisticsRecordResult(deltas: result.deltas, acceptedIntervals: intervals)
-        let batch = tracker.record(input: input, result: qualified, rule: rule, perAppEnabled: false)
+        let batch = tracker.record(input: input, result: qualified, rule: rewardRule, perAppEnabled: false)
         guard batch.hourly.count <= 32 else { error = .capacity; return }
         for hour in batch.hourly where hour.applicationID.isEmpty {
             let key = day(hour.bucketStart)
             if let closed = state.settledThroughDay, key <= closed { continue }
             var value = state.days[key] ?? DailyRewardDay(day: key, sealed: key < state.currentDay)
-            if let existing = value.rule, existing != rule { value.mixedRules = true }
-            if value.rule == nil { value.rule = rule }
-            value.totals.merge(hour.totals)
+            let rowRule = compatibleRewardRule(rewardRule, existing: value.rule)
+            var totals = hour.totals
+            // Late interval slices may still belong to yesterday when the new
+            // day's sampler changes version. Preserve their counts and timing,
+            // but never merge new-version rate moments into a legacy reward day.
+            if rowRule != rewardRule { totals.rateConsistency = .init() }
+            if let existing = value.rule, existing != rowRule { value.mixedRules = true }
+            if value.rule == nil { value.rule = rowRule }
+            value.totals.merge(totals)
             guard value.isValid else { error = .invalidInput; return }
             if state.days[key] == nil, state.days.count >= DailyRewardPolicy.maximumPendingDays { error = .capacity; return }
             state.days[key] = value

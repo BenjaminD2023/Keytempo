@@ -152,6 +152,7 @@ struct ActivityView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 18) {
                 ActivityMetric(label: L("平均速度（估算 WPM）"), value: rateTotals.wpm.map { "≈\(activityValue($0)) WPM" } ?? "— WPM")
+                    .help(speedSampleCoverage(intervals: rateTotals.intervals, seconds: rateTotals.seconds))
                 Divider().frame(height: 50)
                 ActivityMetric(label: L("每秒节奏稳定度"), value: activityValue(rateTotals.consistency) + " / 100",
                                detail: L("%@ 秒样本", rateTotals.rateConsistency.count.formatted()))
@@ -166,6 +167,9 @@ struct ActivityView: View {
                 Text(L("速度与稳定度使用当前计数方式；敲键数量与时长包含全部记录。"))
                     .font(.caption).foregroundStyle(.secondary)
             }
+            Text(speedSampleCoverage(intervals: rateTotals.intervals, seconds: rateTotals.seconds))
+                .font(.caption).foregroundStyle(.secondary)
+                .help(L("速度仅基于已接受间隔。每段首键和未确认的短慢片段仍计入敲键量，但不贡献速度样本；不能用总敲键数减一推算覆盖率。"))
         }
         .padding(.vertical, 8)
         .padding(.horizontal, 2)

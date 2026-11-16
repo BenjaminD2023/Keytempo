@@ -155,6 +155,8 @@ struct HistoryDay: Identifiable {
     @Published private(set) var todayAverageWPM: Double?
     @Published private(set) var todayAverageIsPartial = false
     @Published private(set) var todayAverageCoveredKeys = 0
+    @Published private(set) var todaySpeedSampleIntervals = 0.0
+    @Published private(set) var todaySpeedSampleSeconds = 0.0
     @Published private(set) var activityHourly: [HourlyActivity] = []
     @Published private(set) var activitySessions: [TypingSession] = []
     @Published private(set) var activityScoreDays: [ActivityScoreDay] = []
@@ -221,6 +223,7 @@ struct HistoryDay: Identifiable {
     }
     fileprivate var hybridIdleGrace: Double { engine.config.maximumGap }
     fileprivate var isUIRefreshScheduled: Bool { uiTimer != nil }
+    fileprivate var tenMinuteWindowRefreshDeadline: Double? { windowExpiryDeadline }
     fileprivate func hybridMenuNeedsUI(at now: Double) -> Bool {
         menuDisplay == "hybrid" && !isPaused && !sleeping && !clearing &&
             hybridActivity.needsRefresh(at: now, idleGrace: hybridIdleGrace)
@@ -327,6 +330,7 @@ struct HistoryDay: Identifiable {
     private var uiTimer: Timer?
     private var windowExpiryWork: DispatchWorkItem?
     private var windowExpiryDeadline: Double?
+    private var tenMinuteWindowVisible = false
     private var saveWork: DispatchWorkItem?
     private var retryCount = 0
     private var processingInput = false
@@ -367,7 +371,7 @@ struct HistoryDay: Identifiable {
     private var clearingAppActivity = false
 
     static func rule(_ maximum: Double, suspectedInputFiltering: Bool = true, globalKeyboardCompatibility: Bool = false) -> String {
-        "adaptive-v4-no-space-ime-quality-" + (suspectedInputFiltering ? "on" : "off") + "-max" + String(format: "%.1f", maximum) + (globalKeyboardCompatibility ? "-keyboard-fallback" : "")
+        "adaptive-v5-no-space-ime-quality-" + (suspectedInputFiltering ? "on" : "off") + "-max" + String(format: "%.1f", maximum) + (globalKeyboardCompatibility ? "-keyboard-fallback" : "")
     }
     static func day(_ date: Date = Date()) -> String {
         let c = Calendar.current.dateComponents([.year, .month, .day], from: date)
@@ -755,7 +759,8 @@ struct HistoryDay: Identifiable {
     }
     private func recordRewards(_ input: ClassifiedInput, result: StatisticsRecordResult) {
         let context = ImprovementContext(language: input.language, inputMethodID: input.inputMethodID,
-                                         usesInputMethod: input.usesInputMethod, measurementPolicy: engine.config.ruleID)
+                                         usesInputMethod: input.usesInputMethod,
+                                         measurementPolicy: RewardProgressionPolicy.improvementMeasurementPolicy(engine.config.ruleID))
         rewardEngine?.record(input: input, result: result, context: context,
                              sessionID: activityTracker.currentSession?.id,
                              pendingIntervalCount: engine.pendingProbableIntervals)
@@ -1134,14 +1139,28 @@ struct HistoryDay: Identifiable {
     }
     private func scheduleUI() {
         guard uiTimer == nil else { return }
+        cancelTenMinuteWindowRefresh()
         let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.refreshSnapshot() } }
         timer.tolerance = 0.2; RunLoop.main.add(timer, forMode: .common); uiTimer = timer
     }
-    private func stopUI() { uiTimer?.invalidate(); uiTimer = nil }
+    private func stopUI(at now: Double = ProcessInfo.processInfo.systemUptime) {
+        uiTimer?.invalidate(); uiTimer = nil
+        scheduleTenMinuteWindowRefresh(at: now)
+    }
+    /// The menu average has a consumer only while its popover is open. Opening
+    /// reads the current window immediately; hiding never changes input timing.
+    func setTenMinuteWindowVisible(_ visible: Bool, at now: Double = ProcessInfo.processInfo.systemUptime) {
+        tenMinuteWindowVisible = visible
+        if visible { refreshTenMinuteWindow(at: now) }
+        else { cancelTenMinuteWindowRefresh() }
+    }
+    private func cancelTenMinuteWindowRefresh() {
+        windowExpiryWork?.cancel(); windowExpiryWork = nil; windowExpiryDeadline = nil
+    }
     private func resetTenMinuteWindow() {
         tenMinuteWindow.reset()
         tenMinuteObservationStart = ProcessInfo.processInfo.systemUptime
-        windowExpiryWork?.cancel(); windowExpiryWork = nil; windowExpiryDeadline = nil
+        cancelTenMinuteWindowRefresh()
         tenMinuteWPM = nil; tenMinuteKPM = nil; tenMinuteWindowComplete = true; tenMinuteObservedSeconds = 0
     }
     private func refreshTenMinuteWindow(at now: Double) {
@@ -1151,17 +1170,27 @@ struct HistoryDay: Identifiable {
         if tenMinuteKPM != window.kpm { tenMinuteKPM = window.kpm }
         if tenMinuteWPM != window.estimatedWPM { tenMinuteWPM = window.estimatedWPM }
         if tenMinuteWindowComplete != window.isComplete { tenMinuteWindowComplete = window.isComplete }
-        let deadline = window.nextExpiry
-        guard deadline != windowExpiryDeadline else { return }
-        windowExpiryWork?.cancel(); windowExpiryWork = nil; windowExpiryDeadline = deadline
-        guard let deadline, !sleeping else { return }
+        scheduleTenMinuteWindowRefresh(at: now, hasIntervals: window.nextExpiry != nil)
+    }
+    private func scheduleTenMinuteWindowRefresh(at now: Double, hasIntervals: Bool? = nil) {
+        // Active typing already owns a 1 Hz UI timer. Once that timer stops,
+        // only a visible popover gets lightweight average updates. Hidden
+        // windows expire lazily on the next input, explicit refresh or opening.
+        guard tenMinuteWindowVisible, !sleeping, !isPaused, uiTimer == nil else {
+            cancelTenMinuteWindowRefresh(); return
+        }
+        let needsRefresh = (hasIntervals ?? (tenMinuteWindow.intervalCount > 0)) || tenMinuteObservedSeconds < 600
+        guard needsRefresh else { cancelTenMinuteWindowRefresh(); return }
+        guard windowExpiryWork == nil else { return }
+        let deadline = now + 1
+        windowExpiryDeadline = deadline
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.windowExpiryWork = nil; self.windowExpiryDeadline = nil
-            self.refreshSnapshot()
+            self.refreshTenMinuteWindow(at: ProcessInfo.processInfo.systemUptime)
         }
         windowExpiryWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + max(0.01, deadline - now), execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: work)
     }
     func refreshSnapshot() {
         refreshSnapshot(at: ProcessInfo.processInfo.systemUptime)
@@ -1235,6 +1264,8 @@ struct HistoryDay: Identifiable {
         if todayAverageWPM != averageWPM { todayAverageWPM = averageWPM }
         if todayAverageIsPartial != partial { todayAverageIsPartial = partial }
         if todayAverageCoveredKeys != coveredKeys { todayAverageCoveredKeys = coveredKeys }
+        if todaySpeedSampleIntervals != ratedIntervals { todaySpeedSampleIntervals = ratedIntervals }
+        if todaySpeedSampleSeconds != ratedSeconds { todaySpeedSampleSeconds = ratedSeconds }
         let recentEstimate = estimatedRhythmHasFreshInterval ? estimatedRhythm.kpm : nil
         if estimatedRecentKPM != recentEstimate { estimatedRecentKPM = recentEstimate }
         let combined = MetricDisplay(language: "mul", keys: estimatedToday.reduce(0) { $0 + $1.keys },
@@ -1260,7 +1291,7 @@ struct HistoryDay: Identifiable {
         if status != nextStatus { status = nextStatus }
         publishActivitySnapshot()
         onMenuUpdate?()
-        if snap.phase == .idle && !engine.completionPending && !hybridMenuNeedsUI(at: now) { stopUI() }
+        if snap.phase == .idle && !engine.completionPending && !hybridMenuNeedsUI(at: now) { stopUI(at: now) }
     }
     /// Explicit range/view requests only; a typing UI tick never queries disk
     /// or re-aggregates the long-term history graph.
@@ -1508,6 +1539,7 @@ struct HistoryDay: Identifiable {
     failures += runCombinedEstimateChecks()
     failures += runRollingEstimateChecks()
     failures += runHistoryProjectionChecks()
+    failures += AppModel.runSpeedSampleCoverageChecks()
     failures += AppModel.runActivityIntegrationChecks()
     failures += AppModel.runRewardIntegrationChecks()
     failures += AppModel.runDailyRewardIntegrationChecks(settlementHandoffCheck: settlementHandoffCheck)
@@ -1515,6 +1547,36 @@ struct HistoryDay: Identifiable {
 }
 
 private extension AppModel {
+    static func runSpeedSampleCoverageChecks() -> [String] {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Keytempo-speed-coverage-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let model = AppModel(dataDirectory: directory, monitoringEnabled: false, perAppTracking: false)
+        model.isPaused = false
+        model.maximumGap = 3; model.suspectedInputFilteringEnabled = true; model.globalKeyboardCompatibilityEnabled = false
+        model.engine = StatisticsEngine(config: SegmentationConfig(ruleID: Self.rule(3)))
+        let now = ProcessInfo.processInfo.systemUptime - 45
+        let base = Calendar.current.date(bySettingHour: 12, minute: 0, second: 0, of: Date())!
+        let fast = (0...10).map { Double($0) * 0.1 }
+        let slow = [10.0, 20, 30].flatMap { start in [start, start + 0.8, start + 1.6] }
+        for offset in fast + slow {
+            model.receive(ClassifiedInput(time: now + offset, date: base.addingTimeInterval(offset), context: 1,
+                category: .textEntry, evidence: .probable, source: .global, language: "en"))
+        }
+        model.refreshSnapshot(at: now + 32)
+        var failures = [String]()
+        if model.dailyEstimate.keys != 20 || abs(model.todaySpeedSampleIntervals - 10) > 1e-6 ||
+            abs(model.todaySpeedSampleSeconds - 1) > 1e-6 || abs((model.todayAverageWPM ?? 0) - 120) > 1e-5 {
+            failures.append("FAIL: speed coverage distinguishes all accepted keys from rated fast intervals")
+        }
+        let intervals = model.todaySpeedSampleIntervals, seconds = model.todaySpeedSampleSeconds
+        model.refreshSnapshot(at: now + 100)
+        if intervals != model.todaySpeedSampleIntervals || seconds != model.todaySpeedSampleSeconds {
+            failures.append("FAIL: idle snapshot fabricated speed coverage")
+        }
+        model.flushBeforeExit()
+        return failures
+    }
+
     static func runDailyRewardIntegrationChecks(settlementHandoffCheck: (@MainActor (AppModel) -> [String])?) -> [String] {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Keytempo-daily-reward-check-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -1837,7 +1899,7 @@ private extension AppModel {
         expect(combined.keys == 51 && abs(combined.intervals - 50) < 1e-6 && abs(combined.seconds - 10) < 1e-4,
                "in-flight read overlay neither doubles nor drops deltas")
         expect(abs((combined.wpm ?? 0) - 60) < 1e-3 && combined.score != nil, "weighted WPM and sufficient score")
-        expect(combined.rateConsistency.count == 10 && combined.rateConsistency.intervals == 49 && combined.consistency == 100,
+        expect(combined.rateConsistency.count == 10 && combined.rateConsistency.intervals == 50 && combined.consistency == 100,
                "complete second samples survive the asynchronous read/write overlay")
         expect(combined.score?.consistency == combined.legacyIntervalConsistency,
                "standalone rate consistency does not change the pending score formula")
@@ -2053,7 +2115,7 @@ private extension AppModel {
            "confirmed adapter menu uses estimated WPM while its actual CPM remains available")
     model.handleMonitoringInterruption("前台应用已变化", capabilitiesAvailable: true, source: chinese); model.refreshSnapshot()
     expect(model.selectedMenuSpeed.value == nil, "confirmed editor rate is not carried into another app")
-    expect(AppModel.rule(3) == "adaptive-v4-no-space-ime-quality-on-max3.0" && AppModel.rule(3, globalKeyboardCompatibility: true).hasSuffix("-keyboard-fallback"),
+    expect(AppModel.rule(3) == "adaptive-v5-no-space-ime-quality-on-max3.0" && AppModel.rule(3, globalKeyboardCompatibility: true).hasSuffix("-keyboard-fallback"),
            "Global keyboard fallback has a separate rule without rewriting ordinary or Chinese-only history")
     func deliverSourceEvent(_ offset: Double, language: String) {
         model.receiveConfirmedInput(ClassifiedInput(time: now + offset, date: date.addingTimeInterval(offset),
@@ -2334,6 +2396,33 @@ private extension AppModel {
     if abs((model.tenMinuteWPM ?? 0) - 40) > 1e-3 || abs((model.todayAverageWPM ?? 0) - 40) > 1e-3 {
         failures.append("FAIL: confirmed validation adapter contaminated estimated averages")
     }
+    if model.tenMinuteWindowRefreshDeadline != nil {
+        failures.append("FAIL: a hidden ten-minute average scheduled interval-expiry wakeups")
+    }
+    let openedAt = now + 609.9
+    model.setTenMinuteWindowVisible(true, at: openedAt)
+    if abs((model.tenMinuteKPM ?? 0) - 120) > 1e-3 ||
+        model.tenMinuteWindowRefreshDeadline != openedAt + 1 {
+        failures.append("FAIL: opening the average did not refresh immediately and coalesce expiry at one second")
+    }
+    let deadline = model.tenMinuteWindowRefreshDeadline
+    for offset in [0.001, 0.05, 0.1, 0.2] {
+        model.refreshSnapshot(at: openedAt + offset)
+        if model.tenMinuteWindowRefreshDeadline != deadline {
+            failures.append("FAIL: dense interval expirations rescheduled the visible average at typing cadence")
+        }
+    }
+    let phaseBeforeClose = model.phase, recentBeforeClose = model.estimatedRecentKPM
+    model.setTenMinuteWindowVisible(false, at: openedAt + 0.2)
+    if model.tenMinuteWindowRefreshDeadline != nil || model.phase != phaseBeforeClose ||
+        model.estimatedRecentKPM != recentBeforeClose {
+        failures.append("FAIL: closing the average left wakeups or changed the input/recent-speed state")
+    }
+    model.setTenMinuteWindowVisible(true, at: now + 612)
+    if model.tenMinuteWPM != nil || !model.tenMinuteWindowComplete {
+        failures.append("FAIL: reopening the average retained expired samples or stale completeness")
+    }
+    model.setTenMinuteWindowVisible(false)
     model.flushBeforeExit()
     let restored = AppModel(dataDirectory: directory, monitoringEnabled: false)
     if restored.tenMinuteWPM != nil || restored.tenMinuteKPM != nil || abs((restored.todayAverageWPM ?? 0) - 40) > 1e-3 {

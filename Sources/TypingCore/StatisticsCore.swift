@@ -15,12 +15,16 @@ public enum TypingPhase: String, Codable, Sendable { case idle, candidate, typin
 public struct AcceptedTypingInterval: Sendable, Equatable {
     public let startTime: Double
     public let endTime: Double
+    /// Canonical wall-clock anchor captured at the interval's first event.
+    /// Consumers project monotonic duration from here, including delayed backfill.
+    public let startDate: Date?
     public let evidence: Evidence
     public let language: String
     public let ruleID: String
     public init(startTime: Double, endTime: Double, evidence: Evidence,
-                language: String, ruleID: String) {
+                language: String, ruleID: String, startDate: Date? = nil) {
         self.startTime = startTime; self.endTime = endTime
+        self.startDate = startDate
         self.evidence = evidence; self.language = language; self.ruleID = ruleID
     }
 }
@@ -285,7 +289,8 @@ private struct Lane: Sendable {
                                                        endTime: interval.end.time,
                                                        evidence: interval.end.evidence,
                                                        language: interval.end.language,
-                                                       ruleID: config.ruleID))
+                                                       ruleID: config.ruleID,
+                                                       startDate: interval.start.date))
         segmentEnd = interval.end
         segmentFinalized = false
         totals.intervals += 1; totals.seconds += dt

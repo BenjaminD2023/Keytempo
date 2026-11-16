@@ -158,6 +158,7 @@ public struct ActivityTracker: Sendable {
     private var applicationCollectionStart: Double?
     private var consistencySampler = RateConsistencySampler()
     private var appConsistencySampler = RateConsistencySampler()
+    private var consistencyRule: String?
     private var sampledApplicationID: String?
 
     public init(sessionGap: Double = 300, timeZone: TimeZone = .current) {
@@ -208,19 +209,27 @@ public struct ActivityTracker: Sendable {
               input.time.isFinite, input.date.timeIntervalSince1970.isFinite,
               !rule.isEmpty, rule.utf8.count <= 512,
               result.deltas.filter({ $0.evidence == .probable }).reduce(0, { $0 + $1.keys }) == 1 else { return .init() }
-        // The statistics engine normally handles duplicates. This additional
-        // monotonic guard prevents an accidental delivery retry being counted twice.
-        if let lastInputTime, input.time <= lastInputTime { return .init() }
+        // The engine's accepted key delta is canonical: separate operations
+        // can share a timestamp or arrive after a clock reversal. Those keys
+        // still count, while their unmeasurable timing cannot extend a rhythm.
+        let nonIncreasingClock = lastInputTime.map { input.time <= $0 } ?? false
+        let reversedClock = lastInputTime.map { input.time < $0 } ?? false
+        if nonIncreasingClock { interruptConsistency() }
 
         var outputSessions: [String: TypingSession] = [:]
         var hourly: [String: HourlyActivity] = [:]
-        let wallChanged = lastInputTime.flatMap { priorTime in
+        let wallChanged = reversedClock || (lastInputTime.flatMap { priorTime in
             lastInputDate.map { abs(input.date.timeIntervalSince($0) - (input.time - priorTime)) > 1 }
-        } ?? false
+        } ?? false)
         let expired = lastInputTime.map { input.time - $0 >= sessionGap } ?? false
         if wallChanged || expired || currentSession.map({ $0.rule != rule }) ?? false {
             let reason = wallChanged ? "clockChanged" : expired ? "inactivity" : "ruleChanged"
             for session in finish(reason: reason).sessions { outputSessions[session.id] = session }
+        }
+        if consistencyRule != rule {
+            consistencySampler = RateConsistencySampler(mode: .forMeasurementRule(rule))
+            appConsistencySampler = RateConsistencySampler(mode: .forMeasurementRule(rule))
+            consistencyRule = rule; sampledApplicationID = nil
         }
 
         if perAppEnabled {
@@ -234,15 +243,20 @@ public struct ActivityTracker: Sendable {
         let calendar = self.calendar
         // At most three intervals can be returned by the segmentation engine.
         // Reject malformed oversized results rather than allocating an event history.
-        let intervals = !wallChanged && result.acceptedIntervals.count <= 3 ? result.acceptedIntervals : []
+        let intervals = !wallChanged && !nonIncreasingClock && result.acceptedIntervals.count <= 3 ? result.acceptedIntervals : []
         for interval in intervals.sorted(by: { $0.startTime < $1.startTime }) {
             let duration = interval.endTime - interval.startTime
             guard interval.evidence == .probable, interval.ruleID == rule,
                   interval.startTime.isFinite, interval.endTime.isFinite,
                   duration > 0, duration <= 10, interval.endTime <= input.time + 1e-6,
                   interval.startTime >= input.time - 30 - 1e-6 else { continue }
-            let start = input.date.addingTimeInterval(interval.startTime - input.time)
-            let end = input.date.addingTimeInterval(interval.endTime - input.time)
+            let start = interval.startDate ?? input.date.addingTimeInterval(interval.startTime - input.time)
+            guard start.timeIntervalSince1970.isFinite else { continue }
+            func wallDate(_ time: Double) -> Date {
+                interval.startDate != nil ? start.addingTimeInterval(time - interval.startTime)
+                    : input.date.addingTimeInterval(time - input.time)
+            }
+            let end = wallDate(interval.endTime)
             let mappedDuration = end.timeIntervalSince(start)
             guard mappedDuration > 0 else { continue }
             var cursor = start
@@ -261,7 +275,7 @@ public struct ActivityTracker: Sendable {
                 addSession(totals, start: cursor, end: sliceEnd, rule: rule, output: &outputSessions)
                 if let app, let collectionStart = applicationCollectionStart {
                     let allowedStart = max(interval.startTime, collectionStart)
-                    let allowedDate = input.date.addingTimeInterval(allowedStart - input.time)
+                    let allowedDate = wallDate(allowedStart)
                     let appStart = max(cursor, allowedDate)
                     if appStart < sliceEnd {
                         let appFromFraction = appStart == start ? 0 : appStart.timeIntervalSince(start) / mappedDuration
@@ -278,14 +292,14 @@ public struct ActivityTracker: Sendable {
             // accepted. Delayed slow-rhythm backfill is therefore processed
             // in its original order, without speculative per-key buckets.
             for sample in consistencySampler.record(interval) {
-                let date = input.date.addingTimeInterval(sample.endTime - input.time)
+                let date = wallDate(sample.endTime)
                 let totals = RhythmTotals(rateConsistency: sample.totals)
                 addHour(totals, date: date, applicationID: "", rule: rule, into: &hourly)
                 addSession(totals, start: date, end: date, rule: rule, output: &outputSessions)
             }
             if let app, let collectionStart = applicationCollectionStart, interval.startTime >= collectionStart {
                 for sample in appConsistencySampler.record(interval) {
-                    let date = input.date.addingTimeInterval(sample.endTime - input.time)
+                    let date = wallDate(sample.endTime)
                     addHour(RhythmTotals(rateConsistency: sample.totals), date: date, applicationID: app, rule: rule, into: &hourly)
                 }
             }

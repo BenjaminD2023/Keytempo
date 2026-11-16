@@ -55,6 +55,11 @@ struct RewardMenuSummary: View {
                 }.buttonStyle(.plain).help(L("等级与外观…"))
             }.monospacedDigit().padding(13)
                 .background(Color(nsColor: .controlBackgroundColor).opacity(0.7), in: RoundedRectangle(cornerRadius: 12))
+            if let day = model.dailyRewardState?.current, !day.mixedRules, day.rule?.hasPrefix("adaptive-v4-") == true {
+                Text(L("升级当日沿用旧稳定度"))
+                    .font(.caption).foregroundStyle(.secondary)
+                    .help(L("升级当日的练习积分继续使用原稳定度口径，保留已有样本；下一个奖励日起使用新版。活动页的新规则稳定度可能与此不同。"))
+            }
         }
     }
 }
@@ -77,6 +82,11 @@ struct RewardDashboard: View {
         VStack(alignment: .leading, spacing: 12) {
             if let error = model.dailyRewardError {
                 Label(L(error), systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.orange)
+            }
+            if receipt == nil, selected?.mixedRules == false,
+               selected?.day == model.dailyRewardState?.currentDay, selected?.rule?.hasPrefix("adaptive-v4-") == true {
+                Text(L("升级当日的练习积分继续使用原稳定度口径，保留已有样本；下一个奖励日起使用新版。活动页的新规则稳定度可能与此不同。"))
+                    .font(.caption).foregroundStyle(.secondary)
             }
             if model.dailyRewardState != nil {
                 HStack(alignment: .top, spacing: 0) {
@@ -171,7 +181,7 @@ struct RewardDetails: View {
                         Text(L("按奖励时区每日 00:00 结算并入账 XP，无需等待熄屏或睡眠。下次打开菜单栏或 App 时播放结算动画；睡眠或退出期间错过的结算在恢复或打开时补做。"))
                         Text(L("结算只入账一次；跳过动画不影响 XP。未覆盖的旧记录不补造新分数。"))
                         Text(L("旧 XP 与等级门槛同步换算为 150 倍，原有等级保留；换算本身不作为新增奖励。"))
-                        Text(L("稳定度使用 Monkeytype 式完整一秒速率样本和 Kogasa 映射；统计覆盖不同，不能直接与 Monkeytype 测试成绩比较。"))
+                        Text(L("新版稳定度按有效间隔在每秒内的覆盖比例计算速率，保留 Kogasa 映射；均匀慢速输入不再因整数分桶而失分。旧记录与进步基线保持原口径。"))
                     }.font(.caption).foregroundStyle(.secondary).padding(.top, 8)
                 }
                 calibration

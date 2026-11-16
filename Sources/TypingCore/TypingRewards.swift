@@ -364,8 +364,10 @@ public struct RewardEngine: Sendable {
         let target = endpoints.first { abs($0.time - interval.endTime) <= max(1e-9, interval.endTime.ulp * 2) }
         let startEndpoint = endpoints.first { abs($0.time - interval.startTime) <= max(1e-9, interval.startTime.ulp * 2) }
         let context = target?.context ?? activeContext!
-        let startDate = input.date.addingTimeInterval(interval.startTime - input.time)
-        let endDate = input.date.addingTimeInterval(interval.endTime - input.time)
+        let startDate = interval.startDate ?? input.date.addingTimeInterval(interval.startTime - input.time)
+        guard startDate.timeIntervalSince1970.isFinite else { return }
+        let endDate = interval.startDate != nil ? startDate.addingTimeInterval(duration)
+            : input.date.addingTimeInterval(interval.endTime - input.time)
         let mapped = endDate.timeIntervalSince(startDate)
         guard mapped > 0 else { return }
         var cursor = startDate

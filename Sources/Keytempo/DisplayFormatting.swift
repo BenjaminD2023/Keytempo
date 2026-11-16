@@ -52,6 +52,12 @@ func compactKeystrokeCount(_ count: Int) -> String {
     return number + suffixes[magnitude]
 }
 
+func speedSampleCoverage(intervals: Double, seconds: Double) -> String {
+    L("速度样本：%@ 个有效间隔 · %@ 秒",
+      intervals.formatted(.number.precision(.fractionLength(0...2))),
+      seconds.formatted(.number.precision(.fractionLength(0...1))))
+}
+
 func runDisplayFormattingChecks() -> [String] {
     let examples: [(Int, String)] = [
         (Int.min, "0"), (-1, "0"), (0, "0"), (1, "1"), (999, "999"),

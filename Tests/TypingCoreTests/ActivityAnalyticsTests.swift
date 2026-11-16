@@ -38,7 +38,7 @@ struct ActivityAnalyticsTests {
         let before = tracker.currentSession!
         engine.advance(to: 100)
         let closed = tracker.finish(reason: "pause").sessions[0]
-        checkEqual(closed.end, base.addingTimeInterval(0.8))
+        checkEqual(closed.end.timeIntervalSince(base), 0.8, accuracy: 1e-6)
         checkEqual(closed.totals, before.totals)
         checkEqual(closed.endReason, "pause")
         checkTrue(tracker.finish(reason: "exit").isEmpty)
@@ -161,6 +161,89 @@ struct ActivityAnalyticsTests {
         checkEqual(tracker.finish(reason: "exit").sessions[0].end, base.addingTimeInterval(0.2))
     }
 
+    @Test func distinctOperationsSharingATimestampKeepDailyHourlySessionAndAppCountsEqual() {
+        let base = date("2026-10-23T12:00:00Z")
+        var engine = StatisticsEngine(timeZone: utc), tracker = ActivityTracker(timeZone: utc)
+        var hours: [HourlyActivity] = []
+        var dailyKeys = 0, dailyIntervals = 0.0, dailySeconds = 0.0
+        for (time, context, app) in [(0.0, UInt64(1), "first.editor"), (0.25, 1, "first.editor"),
+                                     (0.25, 2, "second.editor"), (0.5, 2, "second.editor")] {
+            // Global events need not have an operation ID; the real engine
+            // accepts each distinct operation even when timestamps coincide.
+            let event = input(time, base: base, context: context)
+            let result = engine.recordWithIntervals(event)
+            dailyKeys += result.deltas.reduce(0) { $0 + $1.keys }
+            dailyIntervals += result.deltas.reduce(0) { $0 + $1.intervals }
+            dailySeconds += result.deltas.reduce(0) { $0 + $1.seconds }
+            hours += tracker.record(input: event, result: result, rule: engine.config.ruleID,
+                                    applicationID: app, perAppEnabled: true).hourly
+        }
+        let combined = totals(hours)
+        checkEqual(dailyKeys, 4); checkEqual(combined.keys, dailyKeys)
+        checkEqual(totals(hours, app: "first.editor").keys, 2)
+        checkEqual(totals(hours, app: "second.editor").keys, 2)
+        checkEqual(combined.intervals, dailyIntervals); checkEqual(combined.intervals, 2)
+        checkEqual(combined.seconds, dailySeconds); checkEqual(combined.seconds, 0.5)
+        checkEqual(tracker.currentSession!.totals.keys, dailyKeys)
+        checkEqual(tracker.currentSession!.totals.intervals, dailyIntervals)
+        checkEqual(tracker.currentSession!.totals.seconds, dailySeconds)
+        checkEqual(combined.rateConsistency, .init())
+    }
+
+    @Test func reversedClockKeepsAcceptedKeysAndClosesPriorSessionWithoutBridgingTime() {
+        let base = date("2026-10-23T12:00:00Z")
+        var engine = StatisticsEngine(timeZone: utc), tracker = ActivityTracker(timeZone: utc)
+        var hours: [HourlyActivity] = [], sessions: [String: TypingSession] = [:]
+        var dailyKeys = 0, dailyIntervals = 0.0, dailySeconds = 0.0
+        for time in [0.0, 0.25, 0.125, 0.375] {
+            let event = input(time, base: base)
+            let result = engine.recordWithIntervals(event)
+            dailyKeys += result.deltas.reduce(0) { $0 + $1.keys }
+            dailyIntervals += result.deltas.reduce(0) { $0 + $1.intervals }
+            dailySeconds += result.deltas.reduce(0) { $0 + $1.seconds }
+            let batch = tracker.record(input: event, result: result, rule: engine.config.ruleID,
+                                       applicationID: "local.editor", perAppEnabled: true)
+            hours += batch.hourly
+            for session in batch.sessions { sessions[session.id] = session }
+        }
+        let combined = totals(hours), attributed = totals(hours, app: "local.editor")
+        checkEqual(dailyKeys, 4); checkEqual(combined.keys, dailyKeys); checkEqual(attributed.keys, dailyKeys)
+        checkEqual(combined.intervals, dailyIntervals); checkEqual(combined.intervals, 2)
+        checkEqual(combined.seconds, dailySeconds); checkEqual(combined.seconds, 0.5)
+        checkEqual(attributed.intervals, dailyIntervals); checkEqual(attributed.seconds, dailySeconds)
+        checkEqual(sessions.count, 2)
+        let prior = sessions.values.first { $0.endReason == "clockChanged" }!
+        checkEqual(prior.start, base); checkEqual(prior.end, base.addingTimeInterval(0.25))
+        checkEqual(prior.totals.keys, 2); checkEqual(prior.totals.seconds, 0.25)
+        checkEqual(tracker.currentSession!.start, base.addingTimeInterval(0.125))
+        checkEqual(tracker.currentSession!.end, base.addingTimeInterval(0.375))
+        checkEqual(sessions.values.reduce(0) { $0 + $1.totals.keys }, dailyKeys)
+        checkEqual(sessions.values.reduce(0) { $0 + $1.totals.seconds }, dailySeconds)
+        checkEqual(combined.rateConsistency, .init())
+    }
+
+    @Test func sharedTimestampDiscardsIncompleteRateCoverageWithoutDroppingKeys() {
+        let base = date("2026-10-23T12:00:00Z")
+        var engine = StatisticsEngine(timeZone: utc), tracker = ActivityTracker(timeZone: utc)
+        var hours: [HourlyActivity] = []
+        for time in [0.0, 0.2, 0.4, 0.4, 1.0] {
+            hours += record(input(time, base: base), engine: &engine, tracker: &tracker,
+                            app: "local.editor", perApp: true).hourly
+        }
+        checkEqual(totals(hours).keys, 5)
+        checkEqual(totals(hours).intervals, 3)
+        checkEqual(totals(hours).seconds, 1, accuracy: 1e-6)
+        checkEqual(totals(hours).rateConsistency, .init())
+        checkEqual(totals(hours, app: "local.editor").rateConsistency, .init())
+        hours += record(input(1.4, base: base), engine: &engine, tracker: &tracker,
+                        app: "local.editor", perApp: true).hourly
+        let expected = RateConsistencyTotals(count: 1, intervals: 1, sum: 24, squaredSum: 576)
+        checkEqual(totals(hours).keys, 6)
+        checkEqual(totals(hours).rateConsistency, expected)
+        checkEqual(totals(hours, app: "local.editor").rateConsistency, expected)
+        checkEqual(tracker.currentSession!.totals.rateConsistency, expected)
+    }
+
     @Test func perAppMetadataIsOptInAndDoesNotBackfillBeforeConsent() {
         let base = date("2026-10-23T12:00:00Z")
         var engine = StatisticsEngine(timeZone: utc), tracker = ActivityTracker(timeZone: utc)
@@ -240,13 +323,14 @@ struct ActivityAnalyticsTests {
         }
     }
 
-    @Test func invalidResultsCannotAllocateUnboundedIntervalsOrReviveOldInput() {
+    @Test func invalidResultsCannotAllocateUnboundedIntervalsAndEngineDuplicatesStayExcluded() {
         let base = date("2026-10-23T12:00:00Z")
         var engine = StatisticsEngine(timeZone: utc), tracker = ActivityTracker(timeZone: utc)
-        let first = input(0, base: base)
+        let first = input(0, base: base, operationID: 1)
         let result = engine.recordWithIntervals(first)
         _ = tracker.record(input: first, result: result, rule: engine.config.ruleID)
-        checkTrue(tracker.record(input: first, result: result, rule: engine.config.ruleID).isEmpty)
+        let duplicate = engine.recordWithIntervals(first)
+        checkTrue(tracker.record(input: first, result: duplicate, rule: engine.config.ruleID).isEmpty)
         let next = input(1, base: base)
         let many = Array(repeating: AcceptedTypingInterval(startTime: 0, endTime: 1, evidence: .probable, language: "mul", ruleID: engine.config.ruleID), count: 4)
         let malformed = StatisticsRecordResult(deltas: [DailyDelta(day: "2026-10-23", timezoneID: "GMT", ruleID: engine.config.ruleID, evidence: .probable, keys: 1)], acceptedIntervals: many)

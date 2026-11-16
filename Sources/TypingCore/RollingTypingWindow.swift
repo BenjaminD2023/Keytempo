@@ -18,11 +18,19 @@ public struct RollingTypingSnapshot: Sendable, Equatable {
 /// Intervals crossing the window boundary contribute proportional numerator
 /// weight and their complete overlapping duration. No text or key IDs are kept.
 public struct RollingTypingWindow: Sendable {
-    private struct Timing: Sendable { let start: Double; let end: Double }
+    private struct Timing: Sendable {
+        let start: Double
+        let end: Double
+        let cumulativeSeconds: Double
+        var seconds: Double { end - start }
+    }
     public let duration: Double
     public let capacity: Int
     private var timings: [Timing] = []
     private var head = 0
+    private var completedEnd = 0
+    private var lastSnapshotTime: Double?
+    private var cumulativeSeconds = 0.0
     private var omittedThrough: Double?
     public var intervalCount: Int { timings.count - head }
 
@@ -50,9 +58,11 @@ public struct RollingTypingWindow: Sendable {
             // Compact only at capacity, keeping append/prune work amortized
             // and the backing allocation strictly bounded.
             if timings.count == capacity && head > 0 {
+                completedEnd = max(0, completedEnd - head)
                 timings.removeFirst(head); head = 0
             }
-            timings.append(Timing(start: start, end: end))
+            cumulativeSeconds += end - start
+            timings.append(Timing(start: start, end: end, cumulativeSeconds: cumulativeSeconds))
         }
     }
 
@@ -62,14 +72,39 @@ public struct RollingTypingWindow: Sendable {
         }
         expire(at: now)
         let cutoff = now - duration
-        var intervals = 0.0, seconds = 0.0
-        for timing in timings[head...] {
-            let overlap = min(timing.end, now) - max(timing.start, cutoff)
-            if overlap > 0 {
-                intervals += overlap / (timing.end - timing.start)
-                seconds += overlap
+        // Accepted live intervals finish before `now`. The cursor also preserves
+        // right-edge clipping for scripted/future batches without rescanning the
+        // whole retained window. Each interval crosses it only once as time moves
+        // forward; a backwards query rebuilds only the cursor by binary search.
+        if let lastSnapshotTime, now < lastSnapshotTime {
+            var lower = head, upper = timings.count
+            while lower < upper {
+                let middle = lower + (upper - lower) / 2
+                if timings[middle].end <= now { lower = middle + 1 } else { upper = middle }
             }
+            completedEnd = lower
+        } else {
+            completedEnd = max(completedEnd, head)
+            while completedEnd < timings.count && timings[completedEnd].end <= now { completedEnd += 1 }
         }
+        lastSnapshotTime = now
+        var intervals = Double(completedEnd - head)
+        var seconds = completedEnd > head
+            ? timings[completedEnd - 1].cumulativeSeconds -
+                (timings[head].cumulativeSeconds - timings[head].seconds)
+            : 0
+        if completedEnd > head {
+            let first = timings[head]
+            let clipped = max(0, cutoff - first.start)
+            intervals -= clipped / first.seconds
+            seconds -= clipped
+        }
+        if completedEnd < timings.count {
+            let last = timings[completedEnd]
+            let overlap = min(last.end, now) - max(last.start, cutoff)
+            if overlap > 0 { intervals += overlap / last.seconds; seconds += overlap }
+        }
+        intervals = max(0, intervals); seconds = max(0, seconds)
         let complete = omittedThrough == nil
         let kpm = complete && intervals >= 4 && seconds >= 0.5 ? 60 * intervals / seconds : nil
         var expiry = head < timings.count ? timings[head].end + duration : nil
@@ -79,13 +114,16 @@ public struct RollingTypingWindow: Sendable {
     }
 
     public mutating func reset() {
-        timings.removeAll(keepingCapacity: true); head = 0; omittedThrough = nil
+        timings.removeAll(keepingCapacity: true); head = 0; completedEnd = 0
+        lastSnapshotTime = nil; cumulativeSeconds = 0; omittedThrough = nil
     }
 
     private mutating func expire(at now: Double) {
         let cutoff = now - duration
         while head < timings.count && timings[head].end <= cutoff { head += 1 }
-        if head == timings.count { timings.removeAll(keepingCapacity: true); head = 0 }
+        if head == timings.count {
+            timings.removeAll(keepingCapacity: true); head = 0; completedEnd = 0; cumulativeSeconds = 0
+        }
         if let omittedThrough, omittedThrough <= cutoff { self.omittedThrough = nil }
     }
 }

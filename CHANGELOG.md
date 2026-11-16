@@ -25,8 +25,29 @@ The project changed its public version convention before the `0.3.0` release. Hi
 | 0.5.2 | 0.5.2 / `v0.5.2` | 24 | Stable: midnight XP credit and settlement playback on opening |
 | 0.5.3 | 0.5.3 / `v0.5.3` | 25 | Stable: global keyboard compatibility and input-switch recovery |
 | 0.5.4 | 0.5.4 / `v0.5.4` | 26 | Stable: freely available appearances with independent typing levels |
+| 0.6.0 | 0.6.0 / `v0.6.0` | 27 | Stable: consistent accounting, continuous-rate consistency and bounded window refresh |
 
 Already published signed archives, source tags and download URLs retain their original `1.x` identifiers. Their changelog labels are normalized; their embedded app versions have not been rewritten. New releases use `0.x` app versions and tags. The internal build number continues increasing, so Sparkle can offer `0.3.0` (build 11) to apps displaying `1.2.0` (build 9) or `1.2.1` (build 10).
+
+## [0.6.0] - 2026-11-16
+
+Stable release, internal build 27.
+
+### Fixed
+
+- Keep accepted keystrokes in daily rewards, hourly activity, sessions and optional app totals when distinct operations share a timestamp or event time moves backward. Break timing continuity without dropping canonical counts; operation-ID duplicates remain excluded.
+- Use the segmentation engine's original wall-clock anchor for hourly/session attribution and delayed intervals, keeping daily and hourly totals on the same date during small clock corrections across midnight or an hour boundary.
+- Include buffered events discarded with an overflowing batch in the reported loss total.
+
+### Changed
+
+- Measure new `adaptive-v5` consistency from accepted intervals' proportional coverage of complete one-second samples. Uniform slow input no longer loses consistency solely because integer keystroke bins alternate. Retain the Kogasa mapping, evidence gates and original sampler for historical rules and personal-improvement baselines.
+- Keep an upgrade day's existing `adaptive-v4` reward samples under their original policy when only the sampler generation changes; switch rewards on the next reward day. Preserve settled XP and historical records, and label the temporary difference from new Activity consistency.
+- Maintain rolling-window totals incrementally and coalesce visible ten-minute updates to at most once per second. Hidden popovers do not schedule per-interval expiry refreshes; opening them recomputes the current window immediately.
+- Show the effective interval count and measured seconds behind average speed. Short slow bursts and chain starts can count toward keystrokes without contributing speed samples; the display does not invent a percentage from total keys.
+- Limit callback percentile calculation to once per second while diagnostics are enabled, retaining bounded samples and callback work outside the main aggregation path.
+
+Validation uses isolated metadata, clocks and temporary databases. It does not establish physical-input coverage for every editor or input method, or a measured battery-power improvement.
 
 ## [0.5.4] - 2026-11-05
 
@@ -332,7 +353,9 @@ Originally local `1.1.0` builds; no separate public release archive was publishe
 - Separate global estimates from a real confirmed editor adapter, with adaptive segment timing and local aggregate storage.
 - Establish core, persistence and application integration tests and document the limits of real-world input and resource validation.
 
-[Unreleased]: https://github.com/BenjaminD2023/Keytempo/compare/v0.5.3...HEAD
+[Unreleased]: https://github.com/BenjaminD2023/Keytempo/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/BenjaminD2023/Keytempo/compare/v0.5.4...v0.6.0
+[0.5.4]: https://github.com/BenjaminD2023/Keytempo/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/BenjaminD2023/Keytempo/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/BenjaminD2023/Keytempo/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/BenjaminD2023/Keytempo/compare/v0.5.0...v0.5.1

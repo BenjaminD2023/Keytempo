@@ -132,4 +132,63 @@ struct RollingTypingWindowTests {
         checkNil(window.snapshot(at: 601).kpm)
         checkEqual(window.intervalCount, 0)
     }
+
+    @Test func cumulativeTotalsMatchDirectClippingAcrossDenseWindowExpiry() {
+        var window = RollingTypingWindow(duration: 60)
+        var accepted = [AcceptedTypingInterval]()
+        var time = 0.0
+        for index in 0..<2_000 {
+            let end = time + 0.01 + Double(index % 7) * 0.004
+            let next = interval(time, end)
+            accepted.append(next)
+            window.record([next], at: end)
+            time = end + Double(index % 5) * 0.003
+        }
+        // Compare the optimized queue to an independent direct intersection,
+        // including partial first intervals and many expirations in one jump.
+        for offset in stride(from: 0.0, through: 61, by: 0.137) {
+            let now = time + offset, cutoff = now - window.duration
+            var expectedIntervals = 0.0, expectedSeconds = 0.0
+            for timing in accepted {
+                let seconds = max(0, min(timing.endTime, now) - max(timing.startTime, cutoff))
+                expectedIntervals += seconds / (timing.endTime - timing.startTime)
+                expectedSeconds += seconds
+            }
+            let result = window.snapshot(at: now)
+            checkEqual(result.intervals, expectedIntervals, accuracy: 1e-7)
+            checkEqual(result.seconds, expectedSeconds, accuracy: 1e-8)
+            checkEqual(window.snapshot(at: now), result, "repeated snapshots do not consume a partially clipped interval")
+            if expectedIntervals < 4 || expectedSeconds < 0.5 { checkNil(result.kpm) }
+            else { checkEqual(result.kpm!, 60 * expectedIntervals / expectedSeconds, accuracy: 1e-7) }
+        }
+        checkEqual(window.intervalCount, 0)
+    }
+
+    @Test func futureAndBackwardsQueriesKeepBothWindowEdgesClipped() {
+        var window = RollingTypingWindow(duration: 10)
+        window.record([interval(0, 1), interval(2, 3), interval(4, 5)], at: 0.5)
+        for (now, count) in [(0.5, 0.5), (4.5, 2.5), (2.5, 1.5), (5.0, 3.0), (12.5, 1.5)] {
+            let result = window.snapshot(at: now)
+            checkEqual(result.intervals, count, accuracy: 1e-9)
+            checkEqual(result.seconds, count, accuracy: 1e-9)
+        }
+    }
+
+    @Test func repeatedCapacityCompactionKeepsWeightedTotalsAndCompleteness() {
+        var window = RollingTypingWindow(duration: 60, capacity: 8)
+        for index in 0..<1_000 {
+            let start = Double(index) * 0.02
+            window.record([interval(start, start + 0.01)], at: start + 0.01)
+            let result = window.snapshot(at: start + 0.01)
+            checkEqual(result.intervals, Double(window.intervalCount), accuracy: 1e-9)
+            checkEqual(result.seconds, Double(window.intervalCount) * 0.01, accuracy: 1e-9)
+            checkLessThanOrEqual(window.intervalCount, window.capacity)
+            if index >= window.capacity { checkTrue(!result.isComplete); checkNil(result.kpm) }
+        }
+        let expired = window.snapshot(at: 80)
+        checkEqual(expired.intervals, 0)
+        checkEqual(expired.seconds, 0)
+        checkTrue(expired.isComplete)
+        checkNil(expired.nextExpiry)
+    }
 }

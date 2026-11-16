@@ -67,22 +67,35 @@ public struct RateConsistencySample: Sendable {
     }
 }
 
+/// Measurement rules keep persisted moments comparable. Legacy reward
+/// calibration retains integer key bins; adaptive-v5 measures covered rate.
+public enum RateConsistencySamplingMode: Sendable, Equatable {
+    case legacyKeyBins
+    case continuousRate
+
+    public static func forMeasurementRule(_ rule: String) -> Self {
+        rule.hasPrefix("adaptive-v5-") ? .continuousRate : .legacyKeyBins
+    }
+}
+
 /// Constant-memory, event-driven sampling of proven interval chains. Deriving
 /// events from accepted interval endpoints lets adaptive backfill arrive in
 /// order without keeping a speculative per-key history or freezing it early.
 public struct RateConsistencySampler: Sendable {
+    public let mode: RateConsistencySamplingMode
     private var lastEnd: Double?
     private var boundary: Double?
     private var language: String?
     private var rule: String?
     private var keys = 0
     private var intervalCount = 0
+    private var coveredRate = 0.0
 
-    public init() {}
+    public init(mode: RateConsistencySamplingMode = .legacyKeyBins) { self.mode = mode }
 
     public mutating func reset() {
         lastEnd = nil; boundary = nil; language = nil; rule = nil
-        keys = 0; intervalCount = 0
+        keys = 0; intervalCount = 0; coveredRate = 0
     }
 
     public mutating func record(_ interval: AcceptedTypingInterval) -> [RateConsistencySample] {
@@ -103,8 +116,10 @@ public struct RateConsistencySampler: Sendable {
             guard next.isFinite, next > start else { return [] }
             boundary = next; language = interval.language; rule = interval.ruleID
             // The chain's first key has no preceding measurable interval.
-            keys = 1
+            keys = mode == .legacyKeyBins ? 1 : 0
         }
+
+        if mode == .continuousRate { return recordContinuous(start: start, end: end, duration: duration) }
 
         var completed: [RateConsistencySample] = []
         completed.reserveCapacity(2)
@@ -130,6 +145,39 @@ public struct RateConsistencySampler: Sendable {
         keys = keyCount.partialValue; intervalCount = observedCount.partialValue
         lastEnd = end
         return completed
+    }
+
+    /// An accepted interval contributes its uniform rate only where it
+    /// overlaps a covered second. Its endpoint counts once as evidence;
+    /// fractional coverage never invents another accepted interval.
+    private mutating func recordContinuous(start: Double, end: Double, duration: Double) -> [RateConsistencySample] {
+        var cursor = start, completed: [RateConsistencySample] = []
+        completed.reserveCapacity(2)
+        // At most ten complete bins plus one unfinished tail fit in the
+        // accepted maximum duration. No clock or reset fills the tail.
+        for _ in 0..<11 {
+            guard let boundary, boundary > cursor else { reset(); return [] }
+            let reachesBoundary = end > boundary || Self.sameInstant(end, boundary)
+            let sliceEnd = min(end, boundary)
+            coveredRate += 12 * ((sliceEnd - cursor) / duration)
+            let endpointReached = end < boundary || Self.sameInstant(end, boundary)
+            if endpointReached {
+                let count = intervalCount.addingReportingOverflow(1)
+                guard !count.overflow else { reset(); return [] }
+                intervalCount = count.partialValue
+            }
+            if reachesBoundary {
+                completed.append(RateConsistencySample(endTime: boundary,
+                    totals: RateConsistencyTotals(count: 1, intervals: intervalCount,
+                                                  sum: coveredRate, squaredSum: coveredRate * coveredRate)))
+                let next = boundary + 1
+                guard next.isFinite, next > boundary else { reset(); return [] }
+                self.boundary = next; coveredRate = 0; intervalCount = 0
+            }
+            if endpointReached { lastEnd = end; return completed }
+            cursor = boundary
+        }
+        reset(); return []
     }
 
     /// Allow only floating-point representation error at shared endpoints;

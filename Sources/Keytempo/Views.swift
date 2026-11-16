@@ -112,6 +112,9 @@ struct MenuContent: View {
                         Text(cadence(model.dailyEstimate.todayKPM)).foregroundStyle(.secondary)
                     }
                 }.font(.callout).monospacedDigit()
+                Text(speedSampleCoverage(intervals: model.todaySpeedSampleIntervals, seconds: model.todaySpeedSampleSeconds))
+                    .font(.caption).foregroundStyle(.secondary)
+                    .help(L("速度仅基于已接受间隔。每段首键和未确认的短慢片段仍计入敲键量，但不贡献速度样本；不能用总敲键数减一推算覆盖率。"))
                 if model.todayAverageIsPartial {
                     Text(L("平均速度基于 %@ 次敲键", compactKeystrokeCount(model.todayAverageCoveredKeys)))
                         .font(.caption).foregroundStyle(.secondary)
@@ -270,7 +273,7 @@ struct StatisticsView: View {
                 if !model.hasInputPermission || !model.hasAccessibilityPermission {
                     permissionSummary
                 }
-                MetricCard(title: L("日常输入（估算）"), subtitle: L(model.globalKeyboardCompatibilityEnabled ? "全局监听 · 键盘兼容模式" : "全局监听 + 可编辑区域证据"), metric: model.probable, tint: AppStyle.estimated, isGlobal: true, totals: model.dailyEstimate, recentKPM: model.estimatedRecentKPM, todayAverageWPM: model.todayAverageWPM, todayAverageIsPartial: model.todayAverageIsPartial, todayAverageCoveredKeys: model.todayAverageCoveredKeys, isRecentRate: model.recentSpeedIsFrozen || model.phase == "idle")
+                MetricCard(title: L("日常输入（估算）"), subtitle: L(model.globalKeyboardCompatibilityEnabled ? "全局监听 · 键盘兼容模式" : "全局监听 + 可编辑区域证据"), metric: model.probable, tint: AppStyle.estimated, isGlobal: true, totals: model.dailyEstimate, recentKPM: model.estimatedRecentKPM, todayAverageWPM: model.todayAverageWPM, todayAverageIsPartial: model.todayAverageIsPartial, todayAverageCoveredKeys: model.todayAverageCoveredKeys, speedSampleIntervals: model.todaySpeedSampleIntervals, speedSampleSeconds: model.todaySpeedSampleSeconds, isRecentRate: model.recentSpeedIsFrozen || model.phase == "idle")
                 Text(L("当前速度、今日平均速度和累计合并全部输入语言。"))
                     .font(.caption).foregroundStyle(.secondary)
                 GroupBox {
@@ -546,6 +549,8 @@ private struct MetricCard: View {
     var todayAverageWPM: Double? = nil
     var todayAverageIsPartial = false
     var todayAverageCoveredKeys = 0
+    var speedSampleIntervals = 0.0
+    var speedSampleSeconds = 0.0
     var isRecentRate = false
     private var totalsMetric: MetricDisplay { totals ?? metric }
     private var displaySpeed: MenuSpeedDisplay {
@@ -590,6 +595,9 @@ private struct MetricCard: View {
                 Divider()
                 if isGlobal {
                     metricRow(L("今日平均速度"), primaryCadence(todayAverageWPM, unit: .wpm))
+                    Text(speedSampleCoverage(intervals: speedSampleIntervals, seconds: speedSampleSeconds))
+                        .font(.caption).foregroundStyle(.secondary)
+                        .help(L("速度仅基于已接受间隔。每段首键和未确认的短慢片段仍计入敲键量，但不贡献速度样本；不能用总敲键数减一推算覆盖率。"))
                     if todayAverageIsPartial {
                         Text(L("平均速度基于 %@ 次敲键", compactKeystrokeCount(todayAverageCoveredKeys)))
                             .font(.caption).foregroundStyle(.secondary)

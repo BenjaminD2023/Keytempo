@@ -77,6 +77,7 @@ final class InputMonitor {
     private var measurements = [UInt64](repeating: 0, count: 2048)
     private var measureIndex = 0
     private var measureCount = 0
+    private var nextCallbackPercentileAt: Double?
     private var tap: CFMachPort?
     private var tapLoop: CFRunLoop?
     private var tapThread: Thread?
@@ -342,7 +343,8 @@ final class InputMonitor {
 
     /// Shared by the live drain and regression checks; taking a batch clears
     /// every pending slot and the overflow marker atomically.
-    private func takePending(advancingTo nextVersion: UInt64? = nil) -> Batch {
+    private func takePending(advancingTo nextVersion: UInt64? = nil,
+                             diagnosticsAt now: Double = ProcessInfo.processInfo.systemUptime) -> Batch {
         lock.lock()
         var events = [Raw]()
         events.reserveCapacity(buffered)
@@ -353,7 +355,11 @@ final class InputMonitor {
         }
         let lost = dropped; dropped = 0
         if let nextVersion { callbackVersion = nextVersion }
-        let durations = diagnosticsEnabled && measureCount > 0 ? Array(measurements.prefix(measureCount)) : []
+        // Sampling stays bounded in capture; copy/sort that window at most once
+        // per second instead of once for every delivered keyboard batch.
+        let sampleDue = diagnosticsEnabled && measureCount > 0 && now >= (nextCallbackPercentileAt ?? -.infinity)
+        let durations = sampleDue ? Array(measurements.prefix(measureCount)) : []
+        if sampleDue { nextCallbackPercentileAt = now + 1 }
         lock.unlock()
         return Batch(events: events, lost: lost, durations: durations)
     }
@@ -385,8 +391,11 @@ final class InputMonitor {
             discardDeferredContext("事件缓冲区溢出；未确认输入已丢弃")
             flushInputQuality()
             compositionTracker.reset()
-            overflowCount &+= lost
-            onInterruption?("事件缓冲区溢出；已丢弃 \(lost) 个事件")
+            // The conservative policy discards the entire retained prefix too;
+            // diagnostics must report every lost event, not just refused slots.
+            let discarded = lost &+ UInt64(events.count)
+            overflowCount &+= discarded
+            onInterruption?("事件缓冲区溢出；已丢弃 \(discarded) 个事件")
             publish("统计中断：缓冲区溢出")
             return
         }
@@ -704,7 +713,7 @@ final class InputMonitor {
         expect(monitor.buffered == 1024 && monitor.dropped == 1, "overflow is bounded")
         monitor.drain()
         expect(!monitor.compositionTracker.isActive, "overflow clears the estimated composition hypothesis")
-        expect(monitor.overflowCount == 1 && interruptions.contains(where: { $0.contains("溢出") }), "overflow publishes interruption")
+        expect(monitor.overflowCount == 1025 && interruptions.contains(where: { $0.contains("1025") }), "overflow reports both refused slots and the discarded retained prefix")
         expect(monitor.buffered == 0 && monitor.dropped == 0 && forwarded == 0, "overflow batch is discarded without stale forwarding")
         event.setIntegerValueField(.keyboardEventKeycode, value: 7)
         monitor.capture(type: .keyDown, event: event)
@@ -722,6 +731,10 @@ final class InputMonitor {
         monitor.diagnosticsEnabled = true
         for _ in 0..<3000 { monitor.capture(type: .keyDown, event: event) }
         expect(monitor.measureCount == 2048 && monitor.measurements.count == 2048 && monitor.ring.count == 1024, "diagnostic and input memory stay bounded")
+        expect(monitor.takePending(diagnosticsAt: 100).durations.count == 2048 &&
+               monitor.takePending(diagnosticsAt: 100.5).durations.isEmpty &&
+               monitor.takePending(diagnosticsAt: 101).durations.count == 2048,
+               "callback percentile snapshots are coalesced to at most one per second")
         monitor.stop()
         monitor.running = true
         monitor.accepting = true

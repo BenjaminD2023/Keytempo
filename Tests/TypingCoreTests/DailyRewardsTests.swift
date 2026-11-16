@@ -96,6 +96,35 @@ struct DailyRewardsTests {
         checkTrue(daily.state.current!.preliminary)
     }
 
+    @Test func canonicalCountsSurviveSharedAndReversedTimestampsWithoutRevivingOldTimingChains() {
+        let base = date("2026-10-24T12:00:00Z")
+        for times in [[10.0, 10.25, 10.25, 10.5], [10.0, 10.25, 9.0, 9.25, 9.5]] {
+            var daily = DailyRewardEngine(coverageStart: base, progressionTimeZone: utc)
+            var stats = StatisticsEngine(config: SegmentationConfig(ruleID: rule), timeZone: utc)
+            var tracker = ActivityTracker(timeZone: utc)
+            var keys = 0, intervals = 0.0, seconds = 0.0
+            var hourly = RhythmTotals()
+            for (index, time) in times.enumerated() {
+                var event = input(time, base: base); event.operationID = UInt64(index)
+                let result = stats.recordWithIntervals(event)
+                keys += result.deltas.reduce(0) { $0 + $1.keys }
+                intervals += result.deltas.reduce(0) { $0 + $1.intervals }
+                seconds += result.deltas.reduce(0) { $0 + $1.seconds }
+                daily.record(input: event, result: result, rule: rule)
+                for row in tracker.record(input: event, result: result, rule: rule).hourly { hourly.merge(row.totals) }
+                let duplicate = stats.recordWithIntervals(event)
+                daily.record(input: event, result: duplicate, rule: rule)
+                checkTrue(tracker.record(input: event, result: duplicate, rule: rule).isEmpty)
+            }
+            checkNil(daily.error)
+            let actual = daily.state.current!.totals
+            checkEqual(actual.keys, keys); checkEqual(keys, times.count)
+            checkEqual(actual.intervals, intervals); checkEqual(actual.seconds, seconds)
+            checkEqual(hourly.keys, keys); checkEqual(hourly.intervals, intervals); checkEqual(hourly.seconds, seconds)
+            checkEqual(actual.rateConsistency, .init())
+        }
+    }
+
     @Test func midnightSettlementCreditsScoreAndImprovementExactlyOnceWithoutRest() {
         let base = date("2026-10-24T12:00:00Z"), midnight = date("2026-10-25T00:00:00Z")
         var daily = measured(base: base, legacyXP: 10)
@@ -309,6 +338,24 @@ struct DailyRewardsTests {
         checkEqual(daily.state.current!.totals.keys, 1)
         checkEqual(daily.state.days["2026-10-24"]!.totals, yesterday.totals)
         checkEqual(daily.state.days.count, 2)
+    }
+
+    @Test func rollbackShiftsCanonicalWallAnchorsIntoTheStillOpenRewardDay() {
+        let base = date("2026-10-24T12:00:00Z")
+        var daily = DailyRewardEngine(coverageStart: base, progressionTimeZone: utc)
+        daily.advance(to: date("2026-10-25T00:00:00Z"))
+        var stats = StatisticsEngine(config: SegmentationConfig(ruleID: rule), timeZone: utc)
+        for time in [0.0, 0.2, 0.4] {
+            let event = input(time, base: base)
+            daily.record(input: event, result: stats.recordWithIntervals(event), rule: rule)
+        }
+        checkNil(daily.error)
+        checkEqual(daily.state.currentDay, "2026-10-25")
+        checkEqual(daily.state.current!.totals.keys, 3)
+        checkEqual(daily.state.current!.totals.intervals, 2)
+        checkEqual(daily.state.current!.totals.seconds, 0.4, accuracy: 1e-6)
+        checkEqual(daily.state.days["2026-10-24"]!.totals.keys, 0)
+        checkEqual(daily.state.days["2026-10-24"]!.totals.seconds, 0)
     }
 
     @Test func capacityFailurePreservesEveryUnsettledDayInsteadOfDroppingOldAwards() throws {

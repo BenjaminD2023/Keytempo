@@ -15,6 +15,15 @@ public enum RewardProgressionPolicy {
     public static let verificationSeconds = 1_800.0
     public static let windowDays = 7
     public static let maximumContexts = 64
+
+    /// Improvement still uses the legacy key-bin sampler. The activity/daily
+    /// stability upgrade therefore keeps its existing measurement lineage;
+    /// all counting-setting suffixes remain part of the compatibility check.
+    public static func improvementMeasurementPolicy(_ rule: String) -> String {
+        let upgradedPrefix = "adaptive-v5-"
+        guard rule.hasPrefix(upgradedPrefix) else { return rule }
+        return "adaptive-v4-" + rule.dropFirst(upgradedPrefix.count)
+    }
 }
 
 /// Monkeytype's Kogasa mapping applied to normalized per-run rate variation.

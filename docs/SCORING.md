@@ -40,7 +40,7 @@ For one compatible reward day's aggregate evidence:
 
 ```text
 W = weighted estimated WPM
-C = standalone pooled Monkeytype-style consistency, on 0–100
+C = compatible pooled one-second rate consistency, on 0–100
 T = measured typing seconds / 60
 K = accepted keystrokes
 
@@ -69,11 +69,15 @@ These formula examples assume the stated aggregate WPM and consistency have vali
 
 Time and key volume are related during steady input; the formula intentionally gives both explicit contributions. It does not prove that practice was useful or distinguish arbitrary text from meaningful writing. Content shape, repeated words, code and punctuation are not semantic spam evidence. Existing optional metadata filters cannot detect every macro.
 
-## Monkeytype-style consistency
+## Versioned one-second consistency
 
-The mapping follows Monkeytype's pinned [Kogasa function](https://github.com/monkeytypegame/monkeytype/blob/128e4029048f72d3a8106941c4c4602f60c51b24/packages/util/src/numbers.ts) and its [variation in per-second rates](https://github.com/monkeytypegame/monkeytype/blob/128e4029048f72d3a8106941c4c4602f60c51b24/frontend/src/ts/test/test-logic.ts). Keytempo uses filtered operation estimates and different continuity/evidence gates, so its number is not directly interchangeable with a Monkeytype test result.
+The Kogasa mapping follows Monkeytype's pinned [Kogasa function](https://github.com/monkeytypegame/monkeytype/blob/128e4029048f72d3a8106941c4c4602f60c51b24/packages/util/src/numbers.ts) and its [variation in per-second rates](https://github.com/monkeytypegame/monkeytype/blob/128e4029048f72d3a8106941c4c4602f60c51b24/frontend/src/ts/test/test-logic.ts). Keytempo uses filtered operation estimates and different continuity/evidence gates, so its number is not directly interchangeable with a Monkeytype test result.
 
-A sampler starts half-open one-second bins at the beginning of a proven accepted interval chain. The chain's first operation counts once; later accepted interval endpoints contribute further operations. An operation exactly at a bin boundary belongs to the next bin. A bin is complete only when observed accepted coverage reaches its end. Zero-operation full seconds inside a proven chain are included. No timer adds future zero samples. An interruption discards only the unfinished trailing bin; completed samples remain in aggregate moments.
+For new `adaptive-v5-` measurement rules in 0.6.0, each accepted interval contributes `12 × overlap / intervalDuration` to every complete one-second sample it covers. A fixed 0.2-, 0.4-, 0.8-, 1.2- or 2-second rhythm therefore has constant sampled rate instead of alternating integer counts. An interval contributes to the represented-interval evidence count only once its endpoint is covered by a complete sample; crossing several seconds does not create extra intervals. Partial trailing samples and unobserved idle tails remain excluded. The Kogasa mapping, minimum sample gates and score formula are unchanged.
+
+Persisted rows keep their measurement rule. Old moments, immutable receipts and earned XP are not recalculated. The original integer sampler remains the default for legacy rules and the retained personal-improvement evaluator. If an open reward day already has `adaptive-v4-` evidence, an otherwise identical `adaptive-v5-` stream continues that reward day's old sampler through settlement; the next reward day uses v5. A real change to filtering, maximum gap or compatibility settings is not covered by this exception. Activity can show new-rule consistency during the transition, and the UI labels the reward-day difference. Late interval slices retain their old day's timing, but new-version rate moments are excluded from a legacy day rather than mixed into it.
+
+The original sampler, retained for `adaptive-v4-` and improvement evidence, starts half-open one-second bins at the beginning of a proven accepted interval chain. The chain's first operation counts once; later accepted interval endpoints contribute further operations. An operation exactly at a bin boundary belongs to the next bin. A bin is complete only when observed accepted coverage reaches its end. Zero-operation full seconds inside a proven chain are included. No timer adds future zero samples. An interruption discards only the unfinished trailing bin; completed samples remain in aggregate moments.
 
 The daily engine pools completed sample counts, sums and squared sums. Operation counts or those counts multiplied by twelve have the same coefficient of variation:
 
@@ -86,7 +90,7 @@ C = 100 × (1 − tanh(CV + CV³ / 3 + CV⁵ / 5))
 
 `C` is bounded to 0–100 and rounded to two decimals by the standalone sampler before the daily formula uses it. At least ten complete samples, twenty represented accepted intervals and a positive sampled mean are required. Negligible negative variance caused by floating-point roundoff is tolerated; corrupt/nonfinite evidence is rejected. Missing evidence is absent, not zero consistency.
 
-This **pooled standalone consistency is the same value shown by Activity and used in the daily score**. Runs at different means can increase pooled variation. The retained legacy improvement evaluator normalizes each run/block fragment before interval-weighted combination of CV², then applies the same Kogasa mapping. That preserves comparability with its frozen baselines; its value can differ from daily standalone consistency. Neither metric is accuracy or raw inter-key-gap regularity.
+For compatible measurement rules, this **pooled standalone consistency is the value shown by Activity and used in the daily score**. The one-day upgrade exception described above deliberately retains old reward evidence; it does not rewrite or combine old and new sample moments. Runs at different means can increase pooled variation. The retained legacy improvement evaluator normalizes each run/block fragment before interval-weighted combination of CV², then applies the same Kogasa mapping. That preserves comparability with its frozen baselines; its value can differ from daily standalone consistency. Neither metric is accuracy or raw inter-key-gap regularity.
 
 ## XP and settlement lifecycle
 

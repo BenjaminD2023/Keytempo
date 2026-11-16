@@ -38,6 +38,11 @@ enum AppLanguage {
     ]
 
     private static let english: [String: String] = [
+        "速度样本：%@ 个有效间隔 · %@ 秒": "Speed samples: %@ accepted intervals · %@ seconds",
+        "升级当日沿用旧稳定度": "Original consistency retained for the upgrade day",
+        "速度仅基于已接受间隔。每段首键和未确认的短慢片段仍计入敲键量，但不贡献速度样本；不能用总敲键数减一推算覆盖率。": "Speed uses accepted intervals only. Chain starts and unconfirmed short, slow bursts still count as keystrokes but add no speed samples. Coverage cannot be inferred by subtracting one from total keystrokes.",
+        "升级当日的练习积分继续使用原稳定度口径，保留已有样本；下一个奖励日起使用新版。活动页的新规则稳定度可能与此不同。": "The upgrade day's score keeps its original consistency policy and samples. The next reward day uses the new policy. Activity under the new policy may differ today.",
+        "新版稳定度按有效间隔在每秒内的覆盖比例计算速率，保留 Kogasa 映射；均匀慢速输入不再因整数分桶而失分。旧记录与进步基线保持原口径。": "New consistency weights each accepted interval by its overlap with a complete second and retains the Kogasa mapping. Uniform slow input no longer loses points to integer bins. Historical records and improvement baselines retain their original policy.",
         "等级 %@ · 等级与外观": "Level %@ · Levels & Appearance",
         "等级 %@ · %@": "Level %@ · %@",
         "已选择": "Selected",
