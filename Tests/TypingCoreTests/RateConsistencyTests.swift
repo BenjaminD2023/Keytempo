@@ -202,7 +202,9 @@ struct RateConsistencyTests {
     }
 
     @Test func continuousRatesWeightEachCoveredPieceAndStillDetectSpeedChanges() {
-        let times = (0...25).map { Double($0) * 0.2 } + (1...25).map { 5 + Double($0) * 0.4 }
+        let fast: [Double] = (0...25).map { Double($0) * 0.2 }
+        let slow: [Double] = (1...25).map { 5.0 + Double($0) * 0.4 }
+        let times = fast + slow
         let values = samples(times, mode: .continuousRate)
         checkEqual(values.count, 15)
         for sample in values.prefix(5) { checkEqual(sample.totals.sum, 60, accuracy: 1e-9) }
