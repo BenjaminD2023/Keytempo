@@ -1731,7 +1731,9 @@ private extension AppModel {
             expect(condition(), name)
         }
         let base = Calendar.current.date(bySettingHour: 12, minute: 0, second: 0, of: Date())!
-        let monotonic = ProcessInfo.processInfo.systemUptime
+        // Synthetic timestamps share one binary grid so exact XP thresholds
+        // do not depend on a CI machine's uptime and subtraction precision.
+        let monotonic = 1_000_000_000.0
         func event(_ index: Int, start: Double = 0) -> ClassifiedInput {
             let offset = start + Double(index) / 5
             return ClassifiedInput(time: monotonic + offset, date: base.addingTimeInterval(offset), context: 7201,
