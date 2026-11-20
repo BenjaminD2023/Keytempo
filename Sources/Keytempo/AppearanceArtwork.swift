@@ -204,19 +204,34 @@ struct RankSeal: View {
     }
 }
 
-struct LevelProgressTrack: View {
-    let value: Double
+struct LevelProgressTrack: View, Animatable {
+    var value: Double
     let theme: String
+    var gainedFrom: Double? = nil
+    var animatableData: Double { get { value } set { value = newValue } }
     @Environment(\.colorScheme) private var scheme
     @Environment(\.colorSchemeContrast) private var contrast
     var body: some View {
         GeometryReader { geometry in
+            let fraction = min(1, max(0, value.isFinite ? value : 0))
+            let start = gainedFrom.map { min(fraction, max(0, $0.isFinite ? $0 : fraction)) }
             ZStack(alignment: .leading) {
                 Capsule().fill(Color.primary.opacity(contrast == .increased ? 0.2 : 0.08))
                 Capsule().fill(LinearGradient(colors: AppAppearanceStyle.spectrum(theme: theme, scheme: scheme), startPoint: .leading, endPoint: .trailing))
-                    .frame(width: geometry.size.width * min(1, max(0, value.isFinite ? value : 0)))
+                    .frame(width: geometry.size.width * fraction)
+                    .mask(alignment: .leading) {
+                        if let start {
+                            HStack(spacing: 0) {
+                                Color.white.opacity(contrast == .increased ? 0.6 : 0.3)
+                                    .frame(width: geometry.size.width * start)
+                                Color.white
+                            }
+                        } else {
+                            Color.white
+                        }
+                    }
             }
-        }.frame(height: 5).accessibilityHidden(true)
+        }.frame(height: gainedFrom == nil ? 5 : 8).accessibilityHidden(true)
     }
 }
 

@@ -32,6 +32,6 @@ struct ActivityBuffer {
 struct ActivityScoreDay: Identifiable, Equatable {
     let day: Date
     let totals: RhythmTotals
-    let hasMixedRules: Bool
+    let rules: Set<String>
     var id: Date { day }
 }

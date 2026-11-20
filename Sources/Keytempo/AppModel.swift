@@ -185,6 +185,7 @@ struct HistoryDay: Identifiable {
     @Published private(set) var settlementAcknowledging = false
     var onSettlementAvailable: (() -> Void)?
     @Published var activityDate = Date()
+    private var activityFollowsToday = true
     @Published private(set) var perAppTrackingEnabled = UserDefaults.standard.bool(forKey: "perAppTrackingEnabled")
     var activityVisible = false
     var activityCurrentRule: String { engine.config.ruleID }
@@ -461,6 +462,9 @@ struct HistoryDay: Identifiable {
                 if self.activityVisible { self.loadActivity(day: self.activityDate) }
             }
         })
+        observers.append(NotificationCenter.default.addObserver(forName: .NSCalendarDayChanged, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshSnapshot() }
+        })
         if !isPaused && monitoringEnabled { monitor.start() } else { status = "已暂停" }
         if rewardEngine?.hasPendingChanges == true || dailyRewardsNeedSave { scheduleSave(after: 30) }
         refreshSnapshot()
@@ -604,6 +608,24 @@ struct HistoryDay: Identifiable {
         rewardEngine?.interrupt(at: Date(), reason: reason)
         dailyRewardEngine?.interrupt(at: Date(), reason: reason)
     }
+    /// Keep the default view on today across midnight, sleep and reopening.
+    /// An explicitly selected historical day stays selected until Today is used.
+    func openActivity(now: Date = Date()) {
+        if activityFollowsToday { activityDate = Calendar.current.startOfDay(for: now) }
+        loadActivity(day: activityDate)
+    }
+
+    func selectActivityDate(_ day: Date, now: Date = Date()) {
+        activityFollowsToday = Calendar.current.isDate(day, inSameDayAs: now)
+        loadActivity(day: day)
+    }
+
+    private func refreshActivityDay(at now: Date) {
+        guard activityFollowsToday, !Calendar.current.isDate(activityDate, inSameDayAs: now) else { return }
+        activityDate = Calendar.current.startOfDay(for: now)
+        if activityVisible { loadActivity(day: activityDate) }
+    }
+
     func loadActivity(day: Date) {
         let selection = Calendar.current.startOfDay(for: day)
         activityDate = selection; activityVisible = true
@@ -707,7 +729,7 @@ struct HistoryDay: Identifiable {
         let scores = grouped.keys.sorted().map { date in
             let rows = grouped[date]!
             var totals = RhythmTotals(); for row in rows { totals.merge(row.totals) }
-            return ActivityScoreDay(day: date, totals: totals, hasMixedRules: Set(rows.map(\.rule)).count > 1)
+            return ActivityScoreDay(day: date, totals: totals, rules: Set(rows.map(\.rule)))
         }
         if activityHourly != hours { activityHourly = hours }
         if activitySessions != sessions { activitySessions = sessions }
@@ -1196,6 +1218,7 @@ struct HistoryDay: Identifiable {
         refreshSnapshot(at: ProcessInfo.processInfo.systemUptime)
     }
     fileprivate func refreshSnapshot(at now: Double) {
+        if statisticsVisible && activityVisible { refreshActivityDay(at: Date()) }
         menuSnapshotUptime = now
         rewardEngine?.advance(to: Date())
         dailyRewardEngine?.advance(to: Date())
@@ -1322,7 +1345,7 @@ struct HistoryDay: Identifiable {
         startHistoryRead()
     }
     func refreshHistoryIfVisible() {
-        if statisticsVisible && activityVisible { loadActivity(day: activityDate) }
+        if statisticsVisible && activityVisible { openActivity() }
         guard statisticsVisible && historyVisible else { return }
         loadHistory(days: historyDays)
     }
@@ -1541,6 +1564,7 @@ struct HistoryDay: Identifiable {
     failures += runHistoryProjectionChecks()
     failures += AppModel.runSpeedSampleCoverageChecks()
     failures += AppModel.runActivityIntegrationChecks()
+    failures += AppModel.runActivityDateChecks()
     failures += AppModel.runRewardIntegrationChecks()
     failures += AppModel.runDailyRewardIntegrationChecks(settlementHandoffCheck: settlementHandoffCheck)
     return failures
@@ -1574,6 +1598,50 @@ private extension AppModel {
             failures.append("FAIL: idle snapshot fabricated speed coverage")
         }
         model.flushBeforeExit()
+        return failures
+    }
+
+    static func runActivityDateChecks() -> [String] {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Keytempo-activity-date-check-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let model = AppModel(dataDirectory: directory, monitoringEnabled: false)
+        let calendar = Calendar.current
+        let first = calendar.startOfDay(for: Date())
+        let second = calendar.date(byAdding: .day, value: 1, to: first)!
+        let third = calendar.date(byAdding: .day, value: 2, to: first)!
+        let fourth = calendar.date(byAdding: .day, value: 3, to: first)!
+        var failures = [String]()
+        func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
+            if !condition() { failures.append("FAIL: activity date \(message)") }
+        }
+        model.openActivity(now: first)
+        expect(model.activityDate == first && model.activityFollowsToday, "default activity selection opens on today")
+        model.refreshActivityDay(at: second)
+        expect(model.activityDate == second && model.activityFollowsToday, "visible activity advances across midnight without user input")
+        model.releaseActivity()
+        model.openActivity(now: third)
+        expect(model.activityDate == third && model.activityFollowsToday, "reopening after missed days follows today instead of the launch date")
+
+        model.selectActivityDate(first, now: third)
+        let historyRead = model.activityReadToken
+        model.refreshActivityDay(at: fourth)
+        expect(model.activityDate == first && !model.activityFollowsToday && model.activityReadToken == historyRead,
+               "an explicit historical selection stays put without redundant midnight reads")
+        model.releaseActivity()
+        model.openActivity(now: fourth)
+        expect(model.activityDate == first && !model.activityFollowsToday, "reopening preserves an explicitly selected history date")
+
+        model.selectActivityDate(fourth, now: fourth)
+        model.refreshActivityDay(at: third)
+        expect(model.activityDate == third && model.activityFollowsToday, "Today resumes automatic following and handles a backward calendar change")
+        let read = model.activityReadToken
+        model.refreshActivityDay(at: third.addingTimeInterval(60))
+        expect(model.activityReadToken == read, "same-day snapshots never start another activity query")
+        expect(model.dailyEstimate.keys == 0 && model.pendingActivity.isEmpty, "date navigation creates no typing records")
+        let limit = Date().addingTimeInterval(5)
+        while model.activityLoading && Date() < limit { RunLoop.current.run(until: Date().addingTimeInterval(0.01)) }
+        expect(!model.activityLoading, "latest selected-day query completes after stale requests are discarded")
+        model.releaseActivity(); model.flushBeforeExit()
         return failures
     }
 
@@ -1900,6 +1968,9 @@ private extension AppModel {
         var combined = model.activityHourly.filter { $0.applicationID.isEmpty }.reduce(into: RhythmTotals()) { $0.merge($1.totals) }
         expect(combined.keys == 51 && abs(combined.intervals - 50) < 1e-6 && abs(combined.seconds - 10) < 1e-4,
                "in-flight read overlay neither doubles nor drops deltas")
+        expect(combined.keys == model.dailyEstimate.keys &&
+               model.activityHourly.filter { !$0.applicationID.isEmpty }.reduce(0) { $0 + $1.totals.keys } == model.dailyEstimate.keys,
+               "today's menu, hourly activity and opt-in app counts agree after an asynchronous read")
         expect(abs((combined.wpm ?? 0) - 60) < 1e-3 && combined.score != nil, "weighted WPM and sufficient score")
         expect(combined.rateConsistency.count == 10 && combined.rateConsistency.intervals == 50 && combined.consistency == 100,
                "complete second samples survive the asynchronous read/write overlay")
@@ -1920,6 +1991,19 @@ private extension AppModel {
         waitFor({ !model.activityLoading }, "latest date selection wins")
         expect(model.activityHourly.filter { $0.applicationID.isEmpty }.reduce(0) { $0 + $1.totals.keys } == 51,
                "stale read cannot publish another day")
+        expect(model.activityHourly.filter { !$0.applicationID.isEmpty }.reduce(0) { $0 + $1.totals.keys } == model.dailyEstimate.keys,
+               "returning from a historical date keeps app counts aligned with today's menu")
+        do {
+            let database = try AggregateStore(url: directory.appendingPathComponent("statistics.sqlite"))
+            let dayKey = Self.day(date)
+            let daily = try database.query(since: dayKey, until: dayKey).filter { $0.evidence == "probable" }.reduce(0) { $0 + $1.keys }
+            let start = Calendar.current.startOfDay(for: date)
+            let end = Calendar.current.date(byAdding: .day, value: 1, to: start)!
+            let rows = try database.queryHourly(since: start, until: end, includeApplications: true)
+            expect(daily == 51 && rows.filter { $0.applicationID.isEmpty }.reduce(0) { $0 + $1.totals.keys } == daily &&
+                   rows.filter { !$0.applicationID.isEmpty }.reduce(0) { $0 + $1.totals.keys } == daily,
+                   "persisted daily, combined and app counts agree after reopening SQLite")
+        } catch { failures.append("FAIL: activity integration count parity read: \(error.localizedDescription)") }
         type(60..<65); model.flush()
         model.clearAppActivity()
         type(65..<70); model.flush()
@@ -1932,6 +2016,10 @@ private extension AppModel {
             combined = rows.filter { $0.applicationID.isEmpty }.reduce(into: RhythmTotals()) { $0.merge($1.totals) }
             expect(rows.allSatisfy { $0.applicationID.isEmpty } && combined.keys == 61,
                    "app deletion survives in-flight saves and keeps combined totals")
+            let dayKey = Self.day(date)
+            let daily = try database.query(since: dayKey, until: dayKey).filter { $0.evidence == "probable" }.reduce(0) { $0 + $1.keys }
+            expect(daily == combined.keys,
+                   "app-only deletion preserves the same accepted-key total in daily history")
             expect(combined.rateConsistency.count >= initialRateMoments.count && combined.consistency != nil,
                    "new consistency moments survive persistence and app-only deletion")
             let savedSessions = try database.querySessions(since: start, until: end)

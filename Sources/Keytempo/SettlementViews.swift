@@ -28,6 +28,16 @@ struct SettlementPresentation: Identifiable, Equatable {
     var before: DailyLevelProgress? { DailyLevelProgress(totalXP: totalXPBefore) }
     var after: DailyLevelProgress? { DailyLevelProgress(totalXP: totalXPAfter) }
     var levelsGained: Int { max(0, (after?.level ?? 1) - (before?.level ?? 1)) }
+    var beforeProgress: Double { before.map { Double($0.progressXP) / Double($0.requiredXP) } ?? 0 }
+    var completesLevelExactly: Bool { levelsGained > 0 && after?.progressXP == 0 }
+    // At an exact threshold, retain the just-completed level's gain instead
+    // of showing an empty bar. The caption names the completed and new levels.
+    var finalProgress: Double {
+        completesLevelExactly ? 1 : after.map { Double($0.progressXP) / Double($0.requiredXP) } ?? 0
+    }
+    var finalGainStart: Double {
+        levelsGained == 0 || (completesLevelExactly && levelsGained == 1) ? beforeProgress : 0
+    }
 }
 
 struct SettlementView: View {
@@ -46,6 +56,7 @@ struct SettlementView: View {
     @SettlementViewState private var medalScale = 1.0
     @SettlementViewState private var medalRotation = 0.0
     @SettlementViewState private var progress = 0.0
+    @SettlementViewState private var gainStart = 0.0
     @SettlementViewState private var effectsVisible = false
     @SettlementViewState private var levelVisible = false
     @SettlementViewState private var motionFinished = false
@@ -148,7 +159,18 @@ struct SettlementView: View {
                 Text(L("%@ → %@ XP", presentation.totalXPBefore.formatted(), presentation.totalXPAfter.formatted()))
                     .font(.caption).foregroundStyle(.secondary).monospacedDigit()
             }.font(.callout)
-            LevelProgressTrack(value: progress, theme: theme)
+            LevelProgressTrack(value: progress, theme: theme, gainedFrom: presentation.totalXP > 0 ? gainStart : nil)
+            if presentation.totalXP > 0 {
+                HStack(spacing: 6) {
+                    Circle().frame(width: 6, height: 6).accessibilityHidden(true)
+                    Text(L("获得 %@ XP", presentation.totalXP.formatted()))
+                }.font(.caption.weight(.medium))
+                    .foregroundStyle(AppAppearanceStyle.accent(theme: theme, scheme: colorScheme)).monospacedDigit()
+            }
+            if presentation.completesLevelExactly, let after = presentation.after {
+                Text(L("等级 %@ 已完成；等级 %@ 从 0 XP 开始", (after.level - 1).formatted(), after.level.formatted()))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
             if presentation.improvementXP > 0 {
                 Label(L("日均进步 · 已验证"), systemImage: "arrow.up.right")
                     .font(.caption).foregroundStyle(teal).frame(maxWidth: .infinity).padding(.top, 3)
@@ -157,13 +179,14 @@ struct SettlementView: View {
     }
 
     @MainActor private func play() async {
-        let finalProgress = presentation.after.map { Double($0.progressXP) / Double($0.requiredXP) } ?? 0
+        let finalProgress = presentation.finalProgress
         motionFinished = false
         displayedXP = animationsAllowed ? 0 : Double(presentation.totalXP)
         levelVisible = !animationsAllowed
-        progress = presentation.before.map { Double($0.progressXP) / Double($0.requiredXP) } ?? 0
+        progress = presentation.beforeProgress
+        gainStart = presentation.beforeProgress
         medalScale = 1; medalRotation = 0; burst = 0; effectsVisible = animationsAllowed
-        guard animationsAllowed else { progress = finalProgress; return }
+        guard animationsAllowed else { progress = finalProgress; gainStart = presentation.finalGainStart; return }
         withAnimation(.easeOut(duration: 1.15)) { displayedXP = Double(presentation.totalXP) }
         withAnimation(.easeOut(duration: 2.4)) { burst = 1 }
         withAnimation(.easeOut(duration: 0.9)) { progress = presentation.levelsGained > 0 ? 1 : finalProgress }
@@ -173,10 +196,12 @@ struct SettlementView: View {
             guard !motionFinished && animationsAllowed else { finishMotion(); return }
             if presentation.levelsGained > 0 {
                 withAnimation(.spring(response: 0.4, dampingFraction: 0.65)) { levelVisible = true; medalScale = 1.12; medalRotation = -5 }
-                progress = 0
-                try await Task.sleep(for: .milliseconds(120))
-                try Task.checkCancellation()
-                guard !motionFinished && animationsAllowed else { finishMotion(); return }
+                if !presentation.completesLevelExactly || presentation.levelsGained > 1 {
+                    progress = 0; gainStart = presentation.finalGainStart
+                    try await Task.sleep(for: .milliseconds(120))
+                    try Task.checkCancellation()
+                    guard !motionFinished && animationsAllowed else { finishMotion(); return }
+                }
                 withAnimation(.easeOut(duration: 0.9)) { progress = finalProgress; medalScale = 1; medalRotation = 0 }
             }
             try await Task.sleep(for: .milliseconds(2_400))
@@ -196,7 +221,7 @@ struct SettlementView: View {
             motionFinished = true
             effectsVisible = false; displayedXP = Double(presentation.totalXP); levelVisible = true
             medalScale = 1; medalRotation = 0; burst = 1
-            progress = presentation.after.map { Double($0.progressXP) / Double($0.requiredXP) } ?? 0
+            progress = presentation.finalProgress; gainStart = presentation.finalGainStart
         }
     }
 }

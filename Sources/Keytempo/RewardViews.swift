@@ -263,20 +263,14 @@ struct RewardHistory: View {
                             .foregroundStyle(Color.teal.opacity(day.pending ? 0.5 : 0.9))
                     }
                 }.frame(height: 170).accessibilityLabel(L("每日练习积分，暂定日期使用浅色显示"))
+                    .inspectDateChart(days.compactMap { day in
+                        guard let date = date(day.id), let score = day.score else { return nil }
+                        return DateChartInspectionPoint(id: day.id, date: date,
+                            endDate: calendar.date(byAdding: .day, value: 1, to: date), title: day.id,
+                            details: [L("练习积分") + ": " + score.formatted(.number.locale(AppLanguage.currentLocale)),
+                                      day.pending ? L("当日暂定") : L("已结算")])
+                    })
             }
-            performance(L("平均速度（估算 WPM）"), color: .orange, value: { $0.wpm })
-            performance(L("每秒节奏稳定度"), color: .teal, value: { $0.consistency })
-        }
-    }
-    private func performance(_ label: String, color: Color, value: @escaping (RhythmTotals) -> Double?) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(label).font(.callout.weight(.medium))
-            Chart(model.activityScoreDays) { day in
-                if !day.hasMixedRules, let metric = value(day.totals) {
-                    PointMark(x: .value(L("日期"), day.day), y: .value(label, metric)).foregroundStyle(color)
-                    LineMark(x: .value(L("日期"), day.day), y: .value(label, metric)).foregroundStyle(color)
-                }
-            }.frame(height: 115).accessibilityLabel(label)
         }
     }
 }

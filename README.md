@@ -4,6 +4,8 @@ A native macOS menu bar app for understanding your everyday typing rhythm. Built
 
 [简体中文](README.zh-CN.md) · [Releases](https://github.com/BenjaminD2023/Keytempo/releases) · [Changelog](CHANGELOG.md) · [License](LICENSE) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
 
+**Beta preview: 0.6.1-beta (build 28).** [Download for Apple Silicon](https://github.com/BenjaminD2023/Keytempo/releases/download/v0.6.1-beta/Keytempo-0.6.1-beta-macos-arm64.zip) · [Beta release notes](https://github.com/BenjaminD2023/Keytempo/releases/tag/v0.6.1-beta). Adds weekly progress comparisons, exact chart inspection and theme-preserving settlement XP highlights. Stable installations stay on the stable channel.
+
 **Stable release: 0.6.0 (build 27).** [Download for Apple Silicon](https://github.com/BenjaminD2023/Keytempo/releases/download/v0.6.0/Keytempo-0.6.0-macos-arm64.zip) · [Release notes](https://github.com/BenjaminD2023/Keytempo/releases/tag/v0.6.0). Requires macOS 13 or later.
 
 ## What it measures
@@ -33,6 +35,8 @@ The daily overview and menu popup show one **estimated keystroke counter** for e
 Stable release **0.6.0 (build 27)** uses the daily scoring and midnight XP-credit policy below. See the [changelog](CHANGELOG.md) and [validation notes](docs/VALIDATION.md) for release changes and executed checks.
 
 The **Activity** tab provides a date-selectable hourly timeline, automatic sessions, separate speed/consistency trends, and a daily-score chart. Hours and sessions show accepted keystrokes, actual typing time and weighted estimated WPM. Sessions end after a five-minute gap or a pause, sleep, quit, day, timezone or counting-rule boundary. Elapsed span is separate from measured typing time; interruptions add no time.
+
+**Progress over time** compares the latest seven completed days with the previous seven: weighted estimated WPM, consistency points, measured practice, keystrokes and active days. Each week needs at least three qualifying days and five measured minutes; qualifying days need 30 seconds and 20 accepted intervals. Today is excluded, incompatible counting methods stay separate, and missing days are never zero-speed samples. Daily points and a seven-day weighted trend help distinguish sustained changes from bursts. Hover over hourly, history, score and progress charts for exact values. Activity follows today across midnight unless you explicitly select a historical date; app counts show the selected date and unattributed coverage.
 
 **Typing Score** and **XP gained** appear side by side. Score describes that reward day's speed, consistency and amount of measured practice. It refreshes with accepted input and can rise or fall as the day's aggregate performance changes. There is no product ceiling or fixed 90/10 allocation:
 

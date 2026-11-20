@@ -26,8 +26,29 @@ The project changed its public version convention before the `0.3.0` release. Hi
 | 0.5.3 | 0.5.3 / `v0.5.3` | 25 | Stable: global keyboard compatibility and input-switch recovery |
 | 0.5.4 | 0.5.4 / `v0.5.4` | 26 | Stable: freely available appearances with independent typing levels |
 | 0.6.0 | 0.6.0 / `v0.6.0` | 27 | Stable: consistent accounting, continuous-rate consistency and bounded window refresh |
+| 0.6.1-beta | 0.6.1-beta / `v0.6.1-beta` | 28 | Prerelease: progress comparisons, precise chart inspection and settlement XP highlights |
 
 Already published signed archives, source tags and download URLs retain their original `1.x` identifiers. Their changelog labels are normalized; their embedded app versions have not been rewritten. New releases use `0.x` app versions and tags. The internal build number continues increasing, so Sparkle can offer `0.3.0` (build 11) to apps displaying `1.2.0` (build 9) or `1.2.1` (build 10).
+
+## [0.6.1-beta] - 2026-11-20
+
+Prerelease, internal build 28. Stable installations remain on the stable update channel.
+
+### Added
+
+- Show exact keystrokes and measured values when hovering over hourly activity, history, daily-score and progress charts.
+- Add completed-week comparisons for weighted estimated WPM, per-second consistency, measured typing time, keystrokes and active days, with daily points and a seven-day weighted trend. Each week needs three qualifying days and five measured minutes; qualifying days need 30 seconds and 20 accepted intervals. Exclude the unfinished current day, incompatible counting rules and incomplete loaded trend windows.
+
+### Changed
+
+- Highlight XP gained during settlement in the selected theme's original gradient while fading prior progress. Preserve highlights across level-ups and name completed levels at exact XP thresholds. Reduced motion and low-power mode show the final state immediately.
+- Show the selected activity date, full per-app keystroke counts and unattributed coverage. Keep recorded quantities separate from evidence-qualified speed and consistency comparisons.
+
+### Fixed
+
+- Keep Activity on today across midnight, wake and reopening unless a historical date was explicitly selected, preventing comparisons between yesterday's per-app activity and today's menu count.
+
+Global WPM remains an operation-based estimate, not actual words or typing accuracy. Progress comparisons describe recorded activity and do not replace controlled tests or verified XP milestones. No input content is collected; existing measurement rules, historical records and settled XP are preserved.
 
 ## [0.6.0] - 2026-11-16
 
@@ -353,7 +374,8 @@ Originally local `1.1.0` builds; no separate public release archive was publishe
 - Separate global estimates from a real confirmed editor adapter, with adaptive segment timing and local aggregate storage.
 - Establish core, persistence and application integration tests and document the limits of real-world input and resource validation.
 
-[Unreleased]: https://github.com/BenjaminD2023/Keytempo/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/BenjaminD2023/Keytempo/compare/v0.6.1-beta...HEAD
+[0.6.1-beta]: https://github.com/BenjaminD2023/Keytempo/compare/v0.6.0...v0.6.1-beta
 [0.6.0]: https://github.com/BenjaminD2023/Keytempo/compare/v0.5.4...v0.6.0
 [0.5.4]: https://github.com/BenjaminD2023/Keytempo/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/BenjaminD2023/Keytempo/compare/v0.5.2...v0.5.3

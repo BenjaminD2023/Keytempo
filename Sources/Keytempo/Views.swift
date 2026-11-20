@@ -422,6 +422,8 @@ struct StatisticsView: View {
                 if let rate = day.estimatedWPM {
                     BarMark(x: .value(L("本地日期"), day.day), y: .value("WPM", rate))
                         .foregroundStyle(by: .value(L("来源"), L("全局估算")))
+                        .accessibilityLabel(Text(historyInspectionTitle(day)))
+                        .accessibilityValue(Text(historyInspectionDetails(day).joined(separator: ", ")))
                 }
             }
         }
@@ -439,7 +441,26 @@ struct StatisticsView: View {
             }
         }
         .frame(height: 235)
+        .inspectCategoryChart(historyRows.compactMap { day in
+            guard day.estimatedWPM != nil else { return nil }
+            return CategoryChartInspectionPoint(id: day.id, category: day.day,
+                                                title: historyInspectionTitle(day), details: historyInspectionDetails(day))
+        })
         .accessibilityLabel(L("全部输入语言合并的估算 WPM 趋势，%@", historyGranularityLabel))
+    }
+
+    private func historyInspectionTitle(_ day: HistoryDay) -> String {
+        let end = day.periodEnd.isEmpty ? day.day : day.periodEnd
+        return end == day.day ? day.day : L("%@ 至 %@", day.day, end)
+    }
+
+    private func historyInspectionDetails(_ day: HistoryDay) -> [String] {
+        [
+            L("%@ 次敲键", day.estimatedKeys.formatted(.number.locale(AppLanguage.currentLocale))),
+            "\(L("平均速度（估算 WPM）")): \(chartExactValue(day.estimatedWPM))",
+            "\(L("合并 KPM")): \(chartExactValue(day.estimatedKPM))",
+            "\(L("输入段时长")): \(elapsed(day.estimatedSeconds))"
+        ]
     }
 
     private var combinedHistoryTable: some View {

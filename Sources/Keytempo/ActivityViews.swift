@@ -80,6 +80,14 @@ struct ActivityView: View {
             .map { ActivityApp(id: $0.key, rows: $0.value) }
             .sorted { $0.totals.keys > $1.totals.keys }
     }
+    private var appAttributedKeys: Int { applications.reduce(0) { $0 + $1.totals.keys } }
+    private var unattributedKeys: Int { max(0, totals.keys - appAttributedKeys) }
+    private var selectedDayLabel: String {
+        model.activityDate.formatted(.dateTime.year().month(.abbreviated).day().locale(AppLanguage.currentLocale))
+    }
+    private func exactKeystrokes(_ count: Int) -> String {
+        count.formatted(.number.locale(AppLanguage.currentLocale))
+    }
     private var selectedDayRange: ClosedRange<Date> {
         let calendar = Calendar.current
         let start = calendar.startOfDay(for: model.activityDate)
@@ -106,6 +114,7 @@ struct ActivityView: View {
                 } else if model.activityError == nil {
                     RewardDashboard(model: model)
                     summary
+                    TypingProgressView(days: model.activityScoreDays, selectedDate: model.activityDate)
                     RewardDetails(model: model)
                     hourlyTimeline
                     sessions
@@ -120,7 +129,7 @@ struct ActivityView: View {
                 }
             }.padding(24).frame(maxWidth: 980, alignment: .leading).frame(maxWidth: .infinity)
         }
-        .onAppear { model.activityVisible = true; model.loadActivity(day: model.activityDate) }
+        .onAppear { model.openActivity() }
         .onDisappear { model.releaseActivity() }
         .confirmationDialog(L("清除应用活动明细？"), isPresented: $confirmClearApps, titleVisibility: .visible) {
             Button(L("清除应用活动明细"), role: .destructive, action: model.clearAppActivity)
@@ -139,12 +148,12 @@ struct ActivityView: View {
                     .font(.callout).foregroundStyle(.secondary)
             }
             Spacer(minLength: 12)
-            DatePicker(L("活动日期"), selection: Binding(get: { model.activityDate }, set: { model.loadActivity(day: $0) }),
+            DatePicker(L("活动日期"), selection: Binding(get: { model.activityDate }, set: { model.selectActivityDate($0) }),
                        in: (Calendar.current.date(byAdding: .year, value: -5, to: Date()) ?? .distantPast)...Date(),
                        displayedComponents: .date)
                 .labelsHidden().datePickerStyle(.compact).fixedSize()
                 .accessibilityLabel(L("活动日期"))
-            Button(L("今天")) { model.loadActivity(day: Date()) }
+            Button(L("今天")) { model.selectActivityDate(Date()) }
         }
     }
 
@@ -191,6 +200,13 @@ struct ActivityView: View {
                 .chartYAxisLabel(L("敲键数量"))
                 .frame(height: 165)
                 .accessibilityLabel(L("所选日期的小时敲键时间线"))
+                .inspectDateChart(hours.map { hour in
+                    DateChartInspectionPoint(id: hour.id, date: hour.start, endDate: hour.end,
+                                             title: "\(hour.label) – \(activityTime(hour.end, timezone: hour.timezone))",
+                                             details: [L("%@ 次敲键", exactKeystrokes(hour.totals.keys)),
+                                                       L("打字时长：%@ 秒", chartExactValue(hour.totals.seconds)),
+                                                       L("估算速度：%@ WPM", chartExactValue(hour.compatible ? hour.totals.wpm : nil))])
+                })
                 ScrollView(.horizontal) {
                     Grid(alignment: .leading, horizontalSpacing: 28, verticalSpacing: 10) {
                         GridRow {
@@ -200,6 +216,7 @@ struct ActivityView: View {
                             GridRow {
                                 Text(hour.label)
                                 Text(compactKeystrokeCount(hour.totals.keys))
+                                    .help(exactKeystrokes(hour.totals.keys))
                                 Text(activityDuration(hour.totals.seconds))
                                 Text(activityValue(hour.compatible ? hour.totals.wpm : nil))
                             }.font(.callout).monospacedDigit()
@@ -231,6 +248,7 @@ struct ActivityView: View {
                                 Text(activityDuration(max(0, session.end.timeIntervalSince(session.start))))
                                 Text(activityDuration(session.totals.seconds))
                                 Text(compactKeystrokeCount(session.totals.keys))
+                                    .help(exactKeystrokes(session.totals.keys))
                                 Text(activityValue(session.totals.wpm))
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(activityValue(session.totals.consistency))
@@ -258,8 +276,18 @@ struct ActivityView: View {
                 Toggle(L("按应用记录活动"), isOn: Binding(get: { model.perAppTrackingEnabled }, set: model.setPerAppTracking))
                     .toggleStyle(.switch).fixedSize()
             }
+            Text(L("日期：%@ · 总计 %@ 次敲键", selectedDayLabel, exactKeystrokes(totals.keys)))
+                .font(.callout).monospacedDigit()
             Text(L("默认关闭。开启后仅在本机保存应用标识符与统计汇总，不保存窗口标题、网址或输入内容。关闭后停止新增；已保存的应用明细可单独清除。"))
                 .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if model.perAppTrackingEnabled && unattributedKeys > 0 {
+                Text(L("已归属应用：%@ / %@ 次敲键", exactKeystrokes(appAttributedKeys), exactKeystrokes(totals.keys)))
+                    .font(.callout).monospacedDigit()
+                Text(L("未归属应用：%@ 次敲键。仅在开启应用记录时保留明细。", exactKeystrokes(unattributedKeys)))
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if !model.perAppTrackingEnabled {
                 Text(L("应用明细记录已关闭")).font(.callout).foregroundStyle(.secondary)
             } else if applications.isEmpty {
@@ -274,7 +302,7 @@ struct ActivityView: View {
                 ForEach(applications) { application in
                     HStack(spacing: 18) {
                         Text(model.activityAppName(application.id)).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
-                        Text(compactKeystrokeCount(application.totals.keys)).frame(minWidth: 65, alignment: .trailing)
+                        Text(exactKeystrokes(application.totals.keys)).frame(minWidth: 65, alignment: .trailing)
                         Text(activityDuration(application.totals.seconds)).frame(minWidth: 85, alignment: .trailing)
                         Text(activityValue(application.compatible ? application.totals.wpm : nil) + " WPM").frame(minWidth: 85, alignment: .trailing)
                     }.font(.callout).monospacedDigit()

@@ -4,6 +4,8 @@
 
 [English](README.md) · [下载](https://github.com/BenjaminD2023/Keytempo/releases) · [更新日志](CHANGELOG.md) · [MIT 许可](LICENSE) · [参与贡献](CONTRIBUTING.md) · [安全报告](SECURITY.md)
 
+**Beta 预览：0.6.1-beta（build 28）。** [下载 Apple Silicon 版本](https://github.com/BenjaminD2023/Keytempo/releases/download/v0.6.1-beta/Keytempo-0.6.1-beta-macos-arm64.zip) · [Beta 版本说明](https://github.com/BenjaminD2023/Keytempo/releases/tag/v0.6.1-beta)。新增完整周进步对比、图表精确悬停值及保留主题配色的结算 XP 高亮；稳定版继续使用稳定更新渠道。
+
 **稳定版：0.6.0（build 27）。** [下载 Apple Silicon 版本](https://github.com/BenjaminD2023/Keytempo/releases/download/v0.6.0/Keytempo-0.6.0-macos-arm64.zip) · [版本说明](https://github.com/BenjaminD2023/Keytempo/releases/tag/v0.6.0)。需要 macOS 13 或更高版本。
 
 ## 统计能力
@@ -49,6 +51,8 @@
 稳定版 **0.6.0（build 27）** 采用下述每日评分与午夜 XP 入账规则。版本改动见[更新日志](CHANGELOG.md)，已执行检查与限制见[验证记录](docs/VALIDATION.md)。
 
 “活动”页可按日期查看小时活动、自动会话、独立的速度／稳定度趋势与每日分数趋势。小时及会话显示已接受敲键量、实际打字时长和加权估算 WPM。五分钟没有接受到输入，或暂停、睡眠、退出、跨日、时区及计数规则边界会结束会话；经过时间与实际打字时间分开，中断不补时长。
+
+“进步趋势”比较最近两个完整的 7 天，分别显示加权估算 WPM、稳定度点数、实测练习量、敲键量与活跃日。每段需要至少 3 个合格日、合计 5 分钟；合格日需 30 秒和 20 个已接受间隔。当日未完成数据不参与，不同计数方式不比较，缺失日不按零速填充。单日散点与 7 天加权趋势帮助观察持续变化；小时、历史、积分与进步图表均可悬停查看精确值。默认活动日期跨午夜跟随今天，明确选择历史日期时保留所选日；应用明细显示日期、精确总量与未归属覆盖。
 
 **Typing Score／打字分数**与 **XP gained／获得 XP** 并排显示。分数由奖励日内的速度、稳定度和练习投入共同决定，随已接受输入刷新，也可能随当日汇总表现变化而下降。没有分数上限，也不按固定 90%／10% 分配：
 
