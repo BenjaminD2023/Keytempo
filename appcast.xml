@@ -11,6 +11,17 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <keytempo:signingChannel>local-development</keytempo:signingChannel>
     <keytempo:designatedRequirementSHA256>6fdaca68a1f7838c6dcd83bfdc05a9d2f382f00a7080ae28ca1b82d6c655b3f4</keytempo:designatedRequirementSHA256>
     <item>
+      <title>Keytempo 0.6.1-beta</title>
+      <link>https://github.com/BenjaminD2023/Keytempo/releases/tag/v0.6.1-beta</link>
+      <pubDate>Fri, 20 Nov 2026 03:39:47 GMT</pubDate>
+      <sparkle:version>28</sparkle:version>
+      <sparkle:shortVersionString>0.6.1-beta</sparkle:shortVersionString>
+      <sparkle:channel>beta</sparkle:channel>
+      <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+      <description>See the linked release for changes, signing details and known limitations.</description>
+      <enclosure url="https://github.com/BenjaminD2023/Keytempo/releases/download/v0.6.1-beta/Keytempo-0.6.1-beta-macos-arm64.zip" type="application/octet-stream" length="4475156" sparkle:edSignature="e/ak14554t56/DijmsZDszTAr1Z1dZNVdihPSJ6i76iYFiBV43TlIU2jpsmHa6RQw1h0oJ4kQdy4TmWvqi96DQ=="></enclosure>
+    </item>
+    <item>
       <title>Keytempo 0.6.0</title>
       <link>https://github.com/BenjaminD2023/Keytempo/releases/tag/v0.6.0</link>
       <pubDate>Mon, 16 Nov 2026 14:08:49 GMT</pubDate>
@@ -175,6 +186,6 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     </item>
   </channel>
 </rss><!-- sparkle-signatures:
-edSignature: hOHmKkdqQhEIsDzqN5oBAUSFcEYgarCSbZMpsy128MbasBM9tOIrg/PYsA+tDxKNMYVtKHF6vfqIsDOti3vZDw==
-length: 13783
+edSignature: tiUuSo6u8e0d6kpK8+YEf+4QixdhdUYWM0d/91bQF3bVg+ynDZSv/oePeyi7qS9K9CLJnK0HWjuVQzxKEVrqDQ==
+length: 14636
 -->
